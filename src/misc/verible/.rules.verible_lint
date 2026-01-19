@@ -1,0 +1,18 @@
+# Verible Lint Rules
+# Documentation: https://chipsalliance.github.io/verible/lint.html
+
+# Available rules can be listed with: verible-verilog-lint --help_rules
+
+# Example rules:
++line-length=length:100
++no-trailing-spaces
++indentation=spaces:3
++no-tabs
++package-filename
++module-filename
++module-begin-block
++module-parameter-continuous-assign
++parameter-name-style=localparam_style:CAPITALIZED
++explicit-parameter-storage-type
+
+# Disable specific rules by prefixing with -
