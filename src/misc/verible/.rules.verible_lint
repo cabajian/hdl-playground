@@ -9,7 +9,7 @@ package-filename
 module-filename
 
 # Naming styles
-parameter-name-style=localparam_style:ALL_CAPS;parameter_style:CamelCase|ALL_CAPS
+parameter-name-style=localparam_style:ALL_CAPS;parameter_style:ALL_CAPS
 enum-name-style=style_regex:[a-z_0-9]+(_t|_e)
 
 # Module specific
