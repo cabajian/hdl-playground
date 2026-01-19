@@ -20,7 +20,7 @@ compile: $(SRCS)
 	$(VERILATOR) $(VERILATOR_FLAGS) --Mdir $(BUILD_DIR)/obj_dir --top-module $(TOP_MODULE) $(SRCS) -I$(RTL_DIR)
 
 sim: compile
-	$(SIM_EXE)
+	$(SIM_EXE) 2>&1 | tee $(BUILD_DIR)/sim.log
 
 format:
 	verible-verilog-format --flagfile $(MISC_DIR)/verible/.verible-verilog-format.flags --inplace $(SRCS)
