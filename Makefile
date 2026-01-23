@@ -38,6 +38,8 @@ ifeq ($(TEST),uvm)
 else
     TOP_MODULE = tb_counter
     VERIF_SUBDIR = basic
+    # Suppress warnings that are common with Verilator to match UVM flow
+    VERILATOR_FLAGS += -Wno-fatal -Wno-UNUSEDSIGNAL
 endif
 
 SRCS += $(RTL_DIR)/counter.sv $(VERIF_DIR)/$(VERIF_SUBDIR)/$(TOP_MODULE).sv

@@ -4,21 +4,19 @@ module tb_counter;
    logic       rst_n;
    logic [7:0] addr;
    logic       wr_en;
-   wire  [7:0] data;
+   logic [7:0] data_i;
+   logic [7:0] data_o;
    logic [3:0] count;   // To monitor output port directly
-   logic [7:0] wdata;   // To drive data bus during write
-
-   // Bidirectional data bus control
-   assign data = (wr_en) ? wdata : 8'bz;
 
    // Instantiate the counter
    counter dut (
-       .clk  (clk),
-       .rst_n(rst_n),
-       .addr (addr),
-       .wr_en(wr_en),
-       .data (data),
-       .count(count)
+       .clk   (clk),
+       .rst_n (rst_n),
+       .addr  (addr),
+       .wr_en (wr_en),
+       .data_i(data_i),
+       .data_o(data_o),
+       .count (count)
    );
 
    // Clock generation
@@ -32,10 +30,10 @@ module tb_counter;
       $display("Starting counter simulation...");
       
       // Initialize inputs
-      rst_n = 0;
-      addr = 0;
-      wr_en = 0;
-      wdata = 0;
+      rst_n  = 0;
+      addr   = 0;
+      wr_en  = 0;
+      data_i = 0;
       
       #20;
       rst_n = 1;
@@ -48,12 +46,12 @@ module tb_counter;
       // 2. Register Write Test: Set count to 4'hA (10)
       $display("Writing 0xA to counter...");
       @(negedge clk);
-      addr = 8'h00;
-      wr_en = 1;
-      wdata = 8'h0A;
+      addr   = 8'h00;
+      wr_en  = 1;
+      data_i = 8'h0A;
       @(negedge clk);
-      wr_en = 0; // End write
-      wdata = 8'h00; 
+      wr_en  = 0; // End write
+      data_i = 8'h00; 
 
       @(posedge clk); // Allow update
       if (count !== 4'hA) $error("Write Failed! Expected 10, got %d", count);
@@ -62,11 +60,11 @@ module tb_counter;
       // 3. Register Read Test
       $display("Reading counter value...");
       @(negedge clk);
-      addr = 8'h00;
+      addr  = 8'h00;
       wr_en = 0;
       #1; // Wait for data to drive
-      if (data !== {4'h0, count}) $error("Read Failed! Expected %d, got %d", count, data);
-      else $display("Read Success: Data bus saw %d", data);
+      if (data_o !== {4'h0, count}) $error("Read Failed! Expected %d, got %d", count, data_o);
+      else $display("Read Success: data_o saw %d", data_o);
 
       // 4. Verify counter continues from new value
       repeat (2) @(posedge clk);
