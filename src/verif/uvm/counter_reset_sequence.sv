@@ -13,7 +13,7 @@
          `uvm_info("SEQ", "Starting reset sequence", UVM_LOW)
          tr = counter_transaction::type_id::create("tr");
          start_item(tr);
-         tr.rst_n = 0; tr.addr = 0; tr.wr_en = 0; tr.data = 0;
+         tr.rst_n = 0; tr.wr_en = 0; tr.data = 0;
          finish_item(tr);
          
          #20ns; // Hold reset

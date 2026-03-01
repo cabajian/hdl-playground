@@ -1,5 +1,6 @@
-   class counter_monitor extends dv_base_monitor#(counter_agent_cfg);
+   class counter_monitor extends uvm_monitor;
       `uvm_component_utils(counter_monitor)
+
       virtual counter_if vif;
       uvm_analysis_port#(counter_transaction) ap;
 
@@ -10,8 +11,8 @@
 
       virtual function void build_phase(uvm_phase phase);
          super.build_phase(phase);
-         vif = cfg.vif;
-         if (vif == null) `uvm_fatal("MON", "Virtual interface in cfg is null")
+         if (!uvm_config_db#(virtual counter_if)::get(this, "", "counter_vif", vif))
+            `uvm_fatal("MON", "Virtual interface not found in config_db")
       endfunction
 
       virtual task run_phase(uvm_phase phase);
@@ -22,7 +23,6 @@
             
             tr = counter_transaction::type_id::create("tr");
             tr.rst_n = vif.cb.mon_rst_n;
-            tr.addr  = vif.cb.mon_addr;
             tr.wr_en = vif.cb.mon_wr_en;
             tr.data  = vif.cb.mon_wr_en ? vif.cb.mon_data_i : vif.cb.data_o; 
             tr.count = vif.cb.count;

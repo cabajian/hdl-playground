@@ -1,6 +1,7 @@
 
-   class counter_scoreboard extends dv_base_scoreboard;
+   class counter_scoreboard extends uvm_scoreboard;
       `uvm_component_utils(counter_scoreboard)
+
       uvm_analysis_imp#(counter_transaction, counter_scoreboard) item_collected_export;
       
       logic [3:0] expected_count = 0;
@@ -27,7 +28,7 @@
              end
 
              // Calculate NEXT expectation
-             if (tr.wr_en && tr.addr == 0) begin
+             if (tr.wr_en) begin
                  expected_count = tr.data[3:0];
              end else begin
                  expected_count = (tr.count + 1) & 4'hF;

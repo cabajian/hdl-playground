@@ -1,6 +1,7 @@
 
-   class counter_agent extends dv_base_agent#(counter_agent_cfg);
+   class counter_agent extends uvm_agent;
       `uvm_component_utils(counter_agent)
+
       counter_driver    driver;
       counter_monitor   monitor;
       counter_sequencer sequencer;

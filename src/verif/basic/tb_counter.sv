@@ -2,7 +2,6 @@ module tb_counter;
 
    logic       clk;
    logic       rst_n;
-   logic [7:0] addr;
    logic       wr_en;
    logic [7:0] data_i;
    logic [7:0] data_o;
@@ -12,7 +11,6 @@ module tb_counter;
    counter dut (
        .clk   (clk),
        .rst_n (rst_n),
-       .addr  (addr),
        .wr_en (wr_en),
        .data_i(data_i),
        .data_o(data_o),
@@ -31,7 +29,6 @@ module tb_counter;
       
       // Initialize inputs
       rst_n  = 0;
-      addr   = 0;
       wr_en  = 0;
       data_i = 0;
       
@@ -46,7 +43,6 @@ module tb_counter;
       // 2. Register Write Test: Set count to 4'hA (10)
       $display("Writing 0xA to counter...");
       @(negedge clk);
-      addr   = 8'h00;
       wr_en  = 1;
       data_i = 8'h0A;
       @(negedge clk);
@@ -60,7 +56,6 @@ module tb_counter;
       // 3. Register Read Test
       $display("Reading counter value...");
       @(negedge clk);
-      addr  = 8'h00;
       wr_en = 0;
       #1; // Wait for data to drive
       if (data_o !== {4'h0, count}) $error("Read Failed! Expected %d, got %d", count, data_o);

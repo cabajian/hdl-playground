@@ -1,5 +1,5 @@
 
-   class counter_sequencer extends dv_base_sequencer#(counter_transaction, counter_transaction, counter_agent_cfg);
+   class counter_sequencer extends uvm_sequencer#(counter_transaction);
       `uvm_component_utils(counter_sequencer)
 
       function new(string name, uvm_component parent);

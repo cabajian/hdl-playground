@@ -1,5 +1,6 @@
-   class counter_driver extends dv_base_driver#(counter_transaction, counter_transaction, counter_agent_cfg);
+   class counter_driver extends uvm_driver#(counter_transaction);
       `uvm_component_utils(counter_driver)
+
       virtual counter_if vif;
 
       function new(string name, uvm_component parent);
@@ -8,8 +9,8 @@
 
       virtual function void build_phase(uvm_phase phase);
          super.build_phase(phase);
-         vif = cfg.vif;
-         if (vif == null) `uvm_fatal("DRV", "Virtual interface in cfg is null")
+         if (!uvm_config_db#(virtual counter_if)::get(this, "", "counter_vif", vif))
+            `uvm_fatal("DRV", "Virtual interface not found in config_db")
       endfunction
 
       virtual task run_phase(uvm_phase phase);
@@ -20,7 +21,6 @@
             // Sync to clock edge
             @(vif.cb);
             vif.cb.rst_n  <= req.rst_n;
-            vif.cb.addr   <= req.addr;
             vif.cb.wr_en  <= req.wr_en;
             vif.cb.data_i <= req.data;
             
