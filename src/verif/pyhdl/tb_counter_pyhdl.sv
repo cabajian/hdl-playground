@@ -4,7 +4,7 @@ module tb_counter_pyhdl;
    import counter_test_pkg::*;
 
    logic clk;
-   counter_if vif();
+   counter_if vif ();
    assign vif.clk = clk;
 
    // Instantiate the counter and connect via interface
@@ -23,29 +23,29 @@ module tb_counter_pyhdl;
       forever #5 clk = ~clk;
    end
 
-   `ifdef WAVES
+`ifdef WAVES
    initial begin
       $dumpfile(`VCD_FILE);
       $dumpvars(0, tb_counter_pyhdl);
    end
-   `endif
+`endif
 
    // Test sequence
    initial begin
       automatic TestRunnerAPI_exp_impl py_runner;
       automatic counter_test test;
-      
+
       $display("[%0t] Starting counter simulation with pyhdl-if...", $time);
-      
+
       // Start PyHDL-IF
       pyhdl_if_start();
 
       // Wait for signals to settle
       #1;
-      
+
       // Instantiate and call the Python API
       py_runner = new();
-      
+
       // Set up the implementation for Python to call back
       test = new(vif.tb);
 

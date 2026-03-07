@@ -1,25 +1,27 @@
-`timescale 1ns/1ps
+`timescale 1ns / 1ps
 `include "uvm_macros.svh"
 
 // Interface
-interface counter_if (input logic clk);
-   logic rst_n;
+interface counter_if (
+    input logic clk
+);
+   logic       rst_n;
    logic [3:0] count;
    logic       wr_en;
    logic [3:0] data_i;
    logic [3:0] data_o;
-   
+
    clocking cb @(posedge clk);
       output rst_n;
       output wr_en;
       output data_i;
-      
-      input  mon_rst_n = rst_n;  // Add input skew for monitor
-      input  mon_wr_en = wr_en;
-      input  mon_data_i= data_i;
-      
-      input  data_o;
-      input  count;
+
+      input mon_rst_n = rst_n;  // Add input skew for monitor
+      input mon_wr_en = wr_en;
+      input mon_data_i = data_i;
+
+      input data_o;
+      input count;
    endclocking
 endinterface
 
@@ -31,15 +33,15 @@ module tb_counter_uvm;
    // HW signals
    logic clk;
 
-   counter_if vif(clk);
+   counter_if vif (clk);
 
    counter dut (
-      .clk   (vif.clk),
-      .rst_n (vif.rst_n),
-      .wr_en (vif.wr_en),
-      .data_i(vif.data_i),
-      .data_o(vif.data_o),
-      .count (vif.count)
+       .clk   (vif.clk),
+       .rst_n (vif.rst_n),
+       .wr_en (vif.wr_en),
+       .data_i(vif.data_i),
+       .data_o(vif.data_o),
+       .count (vif.count)
    );
 
    initial begin
@@ -47,12 +49,12 @@ module tb_counter_uvm;
       forever #5 clk = ~clk;
    end
 
-   `ifdef WAVES
+`ifdef WAVES
    initial begin
       $dumpfile(`VCD_FILE);
       $dumpvars(0, tb_counter_uvm);
    end
-   `endif
+`endif
 
    initial begin
       // Interface setup

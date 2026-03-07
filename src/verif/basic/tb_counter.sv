@@ -23,12 +23,12 @@ module tb_counter;
       forever #5 clk = ~clk;
    end
 
-   `ifdef WAVES
+`ifdef WAVES
    initial begin
       $dumpfile(`VCD_FILE);
       $dumpvars(0, tb_counter);
    end
-   `endif
+`endif
 
    // Helper tasks (mirrors pyhdl counter_test_pkg)
    task write_count(bit [3:0] val);
@@ -36,17 +36,16 @@ module tb_counter;
       wr_en  = 1;
       data_i = val;
       @(negedge clk);
-      wr_en  = 0;
+      wr_en = 0;
    endtask
 
    task read_count(output bit [3:0] val);
       wr_en = 0;
-      val = data_o;
+      val   = data_o;
    endtask
 
    task check_count(bit [3:0] exp, bit [3:0] act);
-      if (act !== exp)
-         $error("check failed! Expected %h, got %h", exp, act);
+      if (act !== exp) $error("check failed! Expected %h, got %h", exp, act);
    endtask
 
    // Test sequence (matches pyhdl run_test)
