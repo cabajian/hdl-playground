@@ -3,9 +3,6 @@ RTL_DIR = ./src/rtl
 VERIF_DIR = ./src/verif
 BUILD_BASE = build
 
-# Tools
-PYTHON = ./bin/python3
-
 # Collect all SV sources for format/lint
 SRCS = $(shell find $(RTL_DIR) $(VERIF_DIR) -name '*.sv')
 
@@ -16,7 +13,7 @@ SRCS = $(shell find $(RTL_DIR) $(VERIF_DIR) -name '*.sv')
 # ---------------------------------------------------------------------------
 
 test:
-	$(PYTHON) -m pytest $(PYTEST_ARGS)
+	pytest $(PYTEST_ARGS)
 
 # ---------------------------------------------------------------------------
 # Utilities
