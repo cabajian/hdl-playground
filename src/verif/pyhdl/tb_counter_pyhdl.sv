@@ -40,9 +40,6 @@ module tb_counter_pyhdl;
       // Start PyHDL-IF
       pyhdl_if_start();
 
-      // Wait for signals to settle
-      #1;
-
       // Instantiate and call the Python API
       py_runner = new();
 

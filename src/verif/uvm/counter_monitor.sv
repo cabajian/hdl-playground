@@ -19,8 +19,6 @@ class counter_monitor extends uvm_monitor;
       forever begin
          counter_transaction tr;
          @(posedge vif.clk);
-         #1;  // Delay to sample post-clocking-block update
-
          tr = counter_transaction::type_id::create("tr");
          tr.rst_n = vif.cb.mon_rst_n;
          tr.wr_en = vif.cb.mon_wr_en;

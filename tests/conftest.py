@@ -66,13 +66,13 @@ def _build_config(test_name: str, *, waves: bool = False):
     top_module_map = {"basic": "tb_counter", "uvm": "tb_counter_uvm", "pyhdl": "tb_counter_pyhdl"}
     top = top_module_map[test_name]
 
-    flags = ["--binary", "--trace", "-Wall", "-j", "0"]
+    flags = ["--binary", "-Wall", "-j", "0"]
     srcs = []
     python_path = str(VENV_SITE_PACKAGES)
 
     if waves:
         vcd_path = str(build_dir / "waves.vcd")
-        flags += [f"+define+WAVES", f'+define+VCD_FILE="{vcd_path}"']
+        flags += ["--trace", f"+define+WAVES", f'+define+VCD_FILE="{vcd_path}"']
 
     # -- variant-specific flags/sources --
     if test_name == "uvm":
