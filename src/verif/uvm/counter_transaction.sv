@@ -3,7 +3,7 @@
       `uvm_object_utils(counter_transaction)
 
       rand logic       wr_en;
-      rand logic [7:0] data;
+      rand logic [3:0] data;
       rand logic       rst_n;
       logic [3:0]      count;
 

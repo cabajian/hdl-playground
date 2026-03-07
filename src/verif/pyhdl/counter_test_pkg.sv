@@ -13,7 +13,7 @@ package counter_test_pkg;
 
         virtual task write_count(bit [3:0] count);
             vif.cb.wr_en  <= 1;
-            vif.cb.data_i <= {4'h0, count};
+            vif.cb.data_i <= count;
             @(vif.cb);
             vif.cb.wr_en  <= 0;
         endtask

@@ -6,8 +6,8 @@ interface counter_if (input logic clk);
    logic rst_n;
    logic [3:0] count;
    logic       wr_en;
-   logic [7:0] data_i;
-   logic [7:0] data_o;
+   logic [3:0] data_i;
+   logic [3:0] data_o;
    
    clocking cb @(posedge clk);
       output rst_n;

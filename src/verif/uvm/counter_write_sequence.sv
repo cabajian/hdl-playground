@@ -13,10 +13,10 @@
          `uvm_info("SEQ", "Writing 0xA to counter", UVM_LOW)
          tr = counter_transaction::type_id::create("tr");
          start_item(tr);
-         tr.rst_n = 1; tr.wr_en = 1; tr.data = 8'h0A;
+         tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'hA;
          finish_item(tr);
 
-         // 2. Let counter free-run for a few cycles (should auto-increment from 0xA)
+         // 2. Letting counter free-run for a few cycles (should auto-increment from 0xA)
          `uvm_info("SEQ", "Letting counter auto-increment", UVM_LOW)
          repeat (5) begin
             tr = counter_transaction::type_id::create("tr");
@@ -29,7 +29,7 @@
          `uvm_info("SEQ", "Writing 0x0 to counter", UVM_LOW)
          tr = counter_transaction::type_id::create("tr");
          start_item(tr);
-         tr.rst_n = 1; tr.wr_en = 1; tr.data = 8'h00;
+         tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'h0;
          finish_item(tr);
 
          // 4. Let it increment again

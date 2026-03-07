@@ -3,8 +3,8 @@ module tb_counter;
    logic       clk;
    logic       rst_n;
    logic       wr_en;
-   logic [7:0] data_i;
-   logic [7:0] data_o;
+   logic [3:0] data_i;
+   logic [3:0] data_o;
    logic [3:0] count;   // To monitor output port directly
 
    // Instantiate the counter
