@@ -5,7 +5,7 @@ module tb_counter;
    logic       wr_en;
    logic [3:0] data_i;
    logic [3:0] data_o;
-   logic [3:0] count;   // To monitor output port directly
+   logic [3:0] count;
 
    // Instantiate the counter
    counter dut (
@@ -30,48 +30,61 @@ module tb_counter;
    end
    `endif
 
-   // Test sequence
-   initial begin
-      $display("Starting counter simulation...");
-      
-      // Initialize inputs
-      rst_n  = 0;
-      wr_en  = 0;
-      data_i = 0;
-      
-      #20;
-      rst_n = 1;
-      
-      // 1. Verify simple counting (no register interaction)
-      $display("Waiting for counter increment...");
-      repeat (5) @(posedge clk);
-      $display("Count is %d", count);
-
-      // 2. Register Write Test: Set count to 4'hA (10)
-      $display("Writing 0xA to counter...");
+   // Helper tasks (mirrors pyhdl counter_test_pkg)
+   task write_count(bit [3:0] val);
       @(negedge clk);
       wr_en  = 1;
-      data_i = 8'h0A;
+      data_i = val;
       @(negedge clk);
-      wr_en  = 0; // End write
-      data_i = 8'h00; 
+      wr_en  = 0;
+   endtask
 
-      @(posedge clk); // Allow update
-      if (count !== 4'hA) $error("Write Failed! Expected 10, got %d", count);
-      else $display("Write Success: Count set to %d", count);
-
-      // 3. Register Read Test
-      $display("Reading counter value...");
-      @(negedge clk);
+   task read_count(output bit [3:0] val);
       wr_en = 0;
-      #1; // Wait for data to drive
-      if (data_o !== {4'h0, count}) $error("Read Failed! Expected %d, got %d", count, data_o);
-      else $display("Read Success: data_o saw %d", data_o);
+      val = data_o;
+   endtask
 
-      // 4. Verify counter continues from new value
-      repeat (2) @(posedge clk);
-      $display("Count after 2 cycles: %d", count);
-      
+   task check_count(bit [3:0] exp, bit [3:0] act);
+      if (act !== exp)
+         $error("check failed! Expected %h, got %h", exp, act);
+   endtask
+
+   // Test sequence (matches pyhdl run_test)
+   initial begin
+      $display("Starting counter simulation...");
+
+      for (int seed = 0; seed < 16; seed++) begin
+         // Reset
+         rst_n  = 0;
+         wr_en  = 0;
+         data_i = 0;
+         repeat (2) @(negedge clk);
+         rst_n = 1;
+
+         // Seed initial count
+         write_count(4'(seed));
+
+         // 1. Verify simple counting
+         $display("[%0t] Testing simple counting (seed=%0d)...", $time, seed);
+         for (int i = 0; i < 16; i++) begin
+            check_count(4'(seed + i), count);
+            @(negedge clk);
+         end
+
+         // 2. Register Read Test
+         write_count(0);
+         $display("[%0t] Testing counter reading (seed=%0d)...", $time, seed);
+         for (int i = 0; i < 16; i++) begin
+            bit [3:0] exp, act;
+            exp = 4'(i);
+            read_count(act);
+            check_count(exp, act);
+            @(negedge clk);
+         end
+
+         $display("[%0t] Test %0d finished.", $time, seed);
+      end
+
       $display("Simulation finished.");
       $finish;
    end

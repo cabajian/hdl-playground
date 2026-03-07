@@ -15,26 +15,23 @@
       virtual function void write(counter_transaction tr);
          if (!tr.rst_n) begin
             expected_count = 0;
-            // First cycle after reset release will still have 0 at output
+            first_active = 0;
          end else begin
-             // Current transaction reflects what happened at the END of the cycle
-             // The monitor samples inputs driven at start of cycle, and outputs updated at end of cycle
-             
-             // Check mismatch first using PREVIOUS expectation
+             // Check count against expectation
              if (first_active && tr.count !== expected_count) begin
                 `uvm_error("SB", $sformatf("Mismatch! Seen: %0h, Expected: %0h", tr.count, expected_count))
              end else begin
-                `uvm_info("SB", $sformatf("Match: %0h", tr.count), UVM_LOW)
+                `uvm_info("SB", $sformatf("Match: %0h", tr.count), UVM_HIGH)
              end
 
              // Calculate NEXT expectation
              if (tr.wr_en) begin
-                 expected_count = tr.data[3:0];
+                 expected_count = tr.data;
              end else begin
                  expected_count = (tr.count + 1) & 4'hF;
              end
+
+             first_active = 1;
          end
-         
-         if (tr.rst_n) first_active = 1;
       endfunction
    endclass

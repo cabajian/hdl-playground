@@ -9,35 +9,35 @@
       virtual task body();
          counter_transaction tr;
 
-         // 1. Write 0xA to counter
-         `uvm_info("SEQ", "Writing 0xA to counter", UVM_LOW)
-         tr = counter_transaction::type_id::create("tr");
-         start_item(tr);
-         tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'hA;
-         finish_item(tr);
-
-         // 2. Letting counter free-run for a few cycles (should auto-increment from 0xA)
-         `uvm_info("SEQ", "Letting counter auto-increment", UVM_LOW)
-         repeat (5) begin
+         for (int seed = 0; seed < 16; seed++) begin
+            // 1. Write starting count
+            `uvm_info("SEQ", $sformatf("Writing seed %0d", seed), UVM_LOW)
             tr = counter_transaction::type_id::create("tr");
             start_item(tr);
-            tr.rst_n = 1; tr.wr_en = 0; tr.data = 0;
+            tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'(seed);
             finish_item(tr);
-         end
 
-         // 3. Write 0x0 to counter (reset via write)
-         `uvm_info("SEQ", "Writing 0x0 to counter", UVM_LOW)
-         tr = counter_transaction::type_id::create("tr");
-         start_item(tr);
-         tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'h0;
-         finish_item(tr);
+            // 2. Let counter free-run for 16 cycles (verify counting)
+            repeat (16) begin
+               tr = counter_transaction::type_id::create("tr");
+               start_item(tr);
+               tr.rst_n = 1; tr.wr_en = 0; tr.data = 0;
+               finish_item(tr);
+            end
 
-         // 4. Let it increment again
-         repeat (3) begin
+            // 3. Write 0
             tr = counter_transaction::type_id::create("tr");
             start_item(tr);
-            tr.rst_n = 1; tr.wr_en = 0; tr.data = 0;
+            tr.rst_n = 1; tr.wr_en = 1; tr.data = 4'h0;
             finish_item(tr);
+
+            // 4. Read for 16 cycles (verify reading)
+            repeat (16) begin
+               tr = counter_transaction::type_id::create("tr");
+               start_item(tr);
+               tr.rst_n = 1; tr.wr_en = 0; tr.data = 0;
+               finish_item(tr);
+            end
          end
 
          `uvm_info("SEQ", "Write sequence finished", UVM_LOW)
