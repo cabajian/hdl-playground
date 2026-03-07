@@ -1,6 +1,7 @@
 """Shared fixtures for HDL simulation tests."""
 
 import os
+import sys
 import subprocess
 from pathlib import Path
 
@@ -29,8 +30,8 @@ RTL_DIR = PROJECT_ROOT / "src" / "rtl"
 VERIF_DIR = PROJECT_ROOT / "src" / "verif"
 BUILD_BASE = PROJECT_ROOT / "build"
 
-VENV_SITE_PACKAGES = Path(os.environ['VIRTUAL_ENV']) / "lib" / "python3.12" / "site-packages"
-PYHDL_IF_BIN = Path(os.environ['VIRTUAL_ENV']) / "bin" / "pyhdl-if"
+VENV_SITE_PACKAGES = Path(os.environ.get('VIRTUAL_ENV', sys.prefix)) / "lib" / "python3.12" / "site-packages"
+PYHDL_IF_BIN = Path(os.environ.get('VIRTUAL_ENV', sys.prefix)) / "bin" / "pyhdl-if"
 
 
 def _run(cmd: list[str], *, env=None, cwd=None, log_path: Path | None = None) -> subprocess.CompletedProcess:
@@ -150,17 +151,23 @@ def _pyhdl_api_gen(cfg):
     env = os.environ.copy()
     env["PYTHONPATH"] = cfg["python_path"]
 
+    # Discover all python modules in the pyhdl verif sub-directory
+    verif_sub = VERIF_DIR / "pyhdl"
+    modules = [f.stem for f in verif_sub.glob("*.py") if f.is_file()]
+    
+    module_args = []
+    for m in modules:
+        module_args.extend(["-m", m])
+
     api_pkg_path = build_dir / f"{top}_api_pkg.sv"
-    result = _run(
-        [
-            str(PYHDL_IF_BIN), "api-gen-sv",
-            "-m", "simple_print",
-            "-p", f"{top}_api_pkg",
-            "-o", str(api_pkg_path),
-        ],
-        env=env,
-        cwd=str(PROJECT_ROOT),
-    )
+    cmd = [
+        str(PYHDL_IF_BIN), "api-gen-sv",
+        *module_args,
+        "-p", f"{top}_api_pkg",
+        "-o", str(api_pkg_path),
+    ]
+    
+    result = _run(cmd, env=env, cwd=str(PROJECT_ROOT))
     if result.returncode != 0:
         raise RuntimeError(f"pyhdl-if api-gen-sv failed:\n{result.stderr}")
 
