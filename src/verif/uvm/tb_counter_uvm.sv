@@ -47,6 +47,13 @@ module tb_counter_uvm;
       forever #5 clk = ~clk;
    end
 
+   `ifdef WAVES
+   initial begin
+      $dumpfile(`VCD_FILE);
+      $dumpvars(0, tb_counter_uvm);
+   end
+   `endif
+
    initial begin
       // Interface setup
       uvm_config_db#(virtual counter_if)::set(null, "*", "counter_vif", vif);

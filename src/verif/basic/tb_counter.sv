@@ -23,6 +23,13 @@ module tb_counter;
       forever #5 clk = ~clk;
    end
 
+   `ifdef WAVES
+   initial begin
+      $dumpfile(`VCD_FILE);
+      $dumpvars(0, tb_counter);
+   end
+   `endif
+
    // Test sequence
    initial begin
       $display("Starting counter simulation...");
