@@ -1,0 +1,3 @@
+pyhdl-if
+pytest
+pytest-timeout

@@ -1,14 +1,36 @@
-# Verilator
-build
-.vscode
+# Build artifacts
+build/
+obj_dir/
+*.vcd
+*.log
 
-# Python venv (installed in root)
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+.direnv/
 bin/
 lib/
 lib64/
 include/
 share/
 pyvenv.cfg
-__pycache__/
-*.pyc
-*.log
+
+# IDEs and Editors
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db

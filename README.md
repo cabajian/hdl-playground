@@ -21,9 +21,26 @@ Install the following tools on your system:
 - [Verilator](https://verilator.org/guide/latest/install.html) ≥ 5.x (with `--timing` support)
 - [Verible](https://github.com/chipsalliance/verible) (for formatting/linting)
 - Python 3.12+
-- [UVM 1.2](https://www.accellera.org/downloads/standards/uvm) (default path: `~/tools/uvm-1.2`)
+- [UVM 1.2](https://www.accellera.org/downloads/standards/uvm) (via $UVM_HOME, otherwise the default path is: `$HOME/tools/uvm-1.2`)
 
 ### Setup
+
+#### Option 1: Automated (using direnv) - Recommended
+
+If you have [direnv](https://direnv.net/) installed:
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/cabajian/hdl-playground.git
+cd hdl-playground
+
+# 2. Allow direnv to setup the environment
+# This will automatically create a venv, install dependencies,
+# and configure the local git hooks.
+direnv allow
+```
+
+#### Option 2: Manual Setup
 
 ```bash
 # 1. Clone the repo
@@ -31,11 +48,11 @@ git clone https://github.com/cabajian/hdl-playground.git
 cd hdl-playground
 
 # 2. Create and activate a Python virtual environment
-python3 -m venv .
-source bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 3. Install Python dependencies
-pip install pyhdl-if pytest pytest-timeout
+pip install -r requirements.txt
 
 # 4. Enable the pre-commit formatting hook
 git config core.hooksPath .githooks

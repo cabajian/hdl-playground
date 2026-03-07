@@ -29,8 +29,8 @@ RTL_DIR = PROJECT_ROOT / "src" / "rtl"
 VERIF_DIR = PROJECT_ROOT / "src" / "verif"
 BUILD_BASE = PROJECT_ROOT / "build"
 
-VENV_SITE_PACKAGES = PROJECT_ROOT / "lib" / "python3.12" / "site-packages"
-PYHDL_IF_BIN = PROJECT_ROOT / "bin" / "pyhdl-if"
+VENV_SITE_PACKAGES = Path(os.environ['VIRTUAL_ENV']) / "lib" / "python3.12" / "site-packages"
+PYHDL_IF_BIN = Path(os.environ['VIRTUAL_ENV']) / "bin" / "pyhdl-if"
 
 
 def _run(cmd: list[str], *, env=None, cwd=None, log_path: Path | None = None) -> subprocess.CompletedProcess:
@@ -76,7 +76,7 @@ def _build_config(test_name: str, *, waves: bool = False):
 
     # -- variant-specific flags/sources --
     if test_name == "uvm":
-        uvm_root = os.environ.get("UVM_ROOT", "/home/abaji/tools/uvm-1.2/src")
+        uvm_root = os.environ.get("UVM_ROOT", f"{str(Path.home())}/tools/uvm-1.2/src")
         flags += [
             f"+incdir+{uvm_root}",
             "+define+UVM_NO_DPI",
