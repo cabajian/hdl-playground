@@ -1,0 +1,13 @@
+#!/bin/sh
+# Pre-commit hook: ensure SystemVerilog files are formatted
+
+make format
+
+# Check if formatting produced any changes
+if ! git diff --quiet; then
+    echo ""
+    echo "ERROR: Formatter produced changes. Please stage the changes and recommit."
+    echo ""
+    git diff --stat
+    exit 1
+fi
