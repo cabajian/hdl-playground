@@ -64,7 +64,12 @@ def _build_config(test_name: str, *, waves: bool = False):
     """Return (verilator_flags, srcs, env_extras) for *test_name*."""
 
     build_dir = BUILD_BASE / test_name
-    top_module_map = {"basic": "tb_counter", "uvm": "tb_counter_uvm", "pyhdl": "tb_counter_pyhdl"}
+    top_module_map = {
+        "basic": "tb_counter", 
+        "uvm": "tb_counter_uvm", 
+        "pyhdl_counter": "tb_counter_pyhdl",
+        "pyhdl_ether": "tb_ether_pyhdl"
+    }
     top = top_module_map[test_name]
 
     flags = ["--binary", "-Wall", "-j", "0"]
@@ -89,9 +94,12 @@ def _build_config(test_name: str, *, waves: bool = False):
         verif_sub = VERIF_DIR / "uvm"
         flags.append(f"+incdir+{verif_sub}")
         srcs.append(str(verif_sub / "counter_verif_pkg.sv"))
+        srcs.append(str(verif_sub / "tb_counter_uvm.sv"))
 
-    elif test_name == "pyhdl":
-        verif_sub = VERIF_DIR / "pyhdl"
+    elif test_name.startswith("pyhdl"):
+        # e.g. "pyhdl_counter" -> "counter"
+        variant_sub = test_name.split("_", 1)[1]
+        verif_sub = VERIF_DIR / "pyhdl" / variant_sub
         python_path = f"{VENV_SITE_PACKAGES}:{verif_sub}"
 
         pyhdl_share = _pyhdl_if_query("share")
@@ -113,16 +121,24 @@ def _build_config(test_name: str, *, waves: bool = False):
         flags.append(f"+incdir+{build_dir}")
 
         # Extra verif sources
-        srcs.append(str(verif_sub / "counter_if.sv"))
-        srcs.append(str(verif_sub / "counter_test_pkg.sv"))
+        srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
 
     else:  # basic
         verif_sub = VERIF_DIR / "basic"
         flags += ["-Wno-fatal", "-Wno-UNUSEDSIGNAL"]
+        srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
 
-    # Common sources (always last)
+    # Common sources (RTL)
     srcs.append(str(RTL_DIR / "counter.sv"))
-    srcs.append(str(VERIF_DIR / test_name / f"{top}.sv"))
+    if "ether" in test_name:
+        srcs.append(str(RTL_DIR / "ether.sv"))
+
+    # Deduplicate
+    unique_srcs = []
+    for s in srcs:
+        if s not in unique_srcs:
+            unique_srcs.append(s)
+    srcs = unique_srcs
 
     return {
         "top": top,
@@ -142,7 +158,7 @@ def waves(request):
     return request.config.getoption("--waves")
 
 
-def _pyhdl_api_gen(cfg):
+def _pyhdl_api_gen(cfg, test_name):
     """Run pyhdl-if api-gen-sv for the pyhdl test variant."""
     build_dir = cfg["build_dir"]
     top = cfg["top"]
@@ -152,7 +168,8 @@ def _pyhdl_api_gen(cfg):
     env["PYTHONPATH"] = cfg["python_path"]
 
     # Discover all python modules in the pyhdl verif sub-directory
-    verif_sub = VERIF_DIR / "pyhdl"
+    variant_sub = test_name.split("_", 1)[1]
+    verif_sub = VERIF_DIR / "pyhdl" / variant_sub
     modules = [f.stem for f in verif_sub.glob("*.py") if f.is_file()]
     
     module_args = []
@@ -179,8 +196,8 @@ def compile_sim(test_name: str, *, waves: bool = False):
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # API gen for pyhdl
-    if test_name == "pyhdl":
-        _pyhdl_api_gen(cfg)
+    if test_name.startswith("pyhdl"):
+        _pyhdl_api_gen(cfg, test_name)
 
     cmd = [
         "verilator", *cfg["flags"],

@@ -25,12 +25,22 @@ Verilator is highly sensitive to combinational loops and NBA (Non-Blocking Assig
 - **Specify Modports**: In your verification classes, declare the virtual interface with a specific modport (e.g., `virtual my_if.tb vif;`). This provides explicit directionality to Verilator.
 - **Avoid zero-delay loops**: Connecting DUT outputs directly to `logic` signals in an interface monitored by a testbench can sometimes trigger convergence errors. Using `wire` for DUT outputs in the interface or sampling via a clocking block resolves this.
 
-## 3. Output Visibility and Flushing
+## 3. Logging vs. Printing
 
-Python's `stdout` can be buffered when running inside a simulator process. To ensure logs appear in real-time or in the correct order:
+Python's `stdout` can be buffered when running inside a simulator process. While `print(..., flush=True)` works, it is better to use the standard Python `logging` module.
 
-- Use `flush=True` in `print()` calls: `print("Message", flush=True)`.
-- Or call `sys.stdout.flush()` explicitly.
+- **Benefits**:
+    - **Automatic flushing**: Standard logging configuration usually handles stream flushing correctly.
+    - **Verbosity control**: Easily change log levels (DEBUG, INFO, ERROR) without modifying multiple print statements.
+    - **Structured output**: Provides a consistent prefix (e.g., `[INFO]`, `[ERROR]`) making it easier to parse results.
+- **Example**:
+  ```python
+  import logging
+  logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+  logger = logging.getLogger(__name__)
+
+  logger.info("Simulation step started")
+  ```
 
 ## 4. Environment and Build
 
@@ -43,4 +53,19 @@ When Python needs to call back into SystemVerilog (e.g., Python `await api.run_t
 
 - An implementation class in SV must implement the generated `_imp_if` interface.
 - A proxy object (`TestAPI_imp_impl`) must be instantiated and its `m_obj` passed to the Python side.
-- The SV task being called is executed in a forked process by the `pyhdl-if` library.
+## 6. Python Assertions and Error Handling
+
+Using standard Python `assert` statements should be avoided in PyHDL-IF test runners.
+
+- **Issue**: When an `assert` fails, it raises an `AssertionError`. Depending on how the simulator bridge handles exceptions, this can lead to:
+    - Silent simulation hangs.
+    - Incomprehensible or truncated log outputs that don't clearly show the failed condition.
+    - Difficulty in debugging why the simulation stopped.
+- **Best Practice**: Use explicit `if` checks and raise a descriptive `Exception` or use a dedicated error reporting mechanism. This ensures that the failure is explicitly logged and the simulation can be terminated gracefully with a clear message.
+- **Example**:
+    - **Avoid**: `assert len(data) == 82`
+    - **Prefer**:
+      ```python
+      if len(data) != 82:
+          raise Exception(f"Packet length mismatch! Expected 82, got {len(data)}")
+      ```

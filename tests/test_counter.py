@@ -39,7 +39,7 @@ def test_uvm(waves):
 
 def test_pyhdl(waves):
     """Compile and run the PyHDL-IF testbench."""
-    cfg, comp = compile_sim("pyhdl", waves=waves)
+    cfg, comp = compile_sim("pyhdl_counter", waves=waves)
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
