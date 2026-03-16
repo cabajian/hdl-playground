@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @hif.api
 class TestAPI(object):
     @hif.imp
-    async def send_packet(self, packet: typing.List):
+    async def drive(self, packet: typing.List):
         pass
 
 @hif.api
@@ -57,7 +57,7 @@ class TestRunnerAPI(object):
             self._last_pkt = pkt
             # Send packet
             logger.info(f"[{self._sim_time_ns}ns] Sending test packet {i}: {pkt} (length:{len(raw_pkt)})...")
-            await api.send_packet(raw_pkt)
+            await api.drive(raw_pkt)
             logger.info(f"[{self._sim_time_ns}ns] Finished sending test packet {i}")
 
         if (self._num_matches != num_packets):
