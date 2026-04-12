@@ -161,7 +161,11 @@ package ether_test_pkg;
 
                $display("[%0t] SV Monitor: Forwarding reconstructed packet back to Python", $time);
                py_clock.advance_to(longint'($time));
-               py_runner.check_packet(py_data.borrow());
+               // The generated wrapper does PyTuple_SetItem(args, 0, ...) which
+               // steals a ref. Hand it an owned ref via steal() so our own
+               // dispose() below doesn't free the object while the (internally
+               // retained) args tuple still references it.
+               py_runner.check_packet(py_data.steal());
                py_data.dispose();
             end
          end

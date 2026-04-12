@@ -47,9 +47,7 @@ class TestRunnerAPI(object):
 
     @hif.exp
     async def start_test(self, api: TestAPI):
-        # TODO: segfaults somewhere in pyhdl-if/Verilator around ~75 packets;
-        # stick to 50 until the upstream resource leak is tracked down.
-        num_packets = 50
+        num_packets = 100
         for i in range(num_packets):
             mac_src = ":".join([f"{random.randint(0, 255):02x}" for _ in range(6)])
             mac_dst = ":".join([f"{random.randint(0, 255):02x}" for _ in range(6)])
