@@ -1,3 +1,5 @@
+`include "sim_clock.svh"
+
 module tb_ether_pyhdl;
    import pyhdl_if::*;
    import tb_ether_pyhdl_api_pkg::*;
@@ -40,6 +42,7 @@ module tb_ether_pyhdl;
    // Test sequence
    initial begin
       automatic TestRunnerAPI_exp_impl py_runner;
+      automatic SimClockAPI_exp_impl py_clock;
       automatic pyhdl_ether_test test;
 
       $timeformat(-9, 0, "ns");
@@ -49,12 +52,17 @@ module tb_ether_pyhdl;
       // Start PyHDL-IF
       pyhdl_if_start();
 
-      // Instantiate and call the Python API
+      // Instantiate Python-facing APIs
+      py_clock  = new();
       py_runner = new();
+
+      // Start the background polling thread to keep the simpy clock in sync.
+      // Override at runtime via +sim_clock.poll_ns=N.
+      `SIM_CLOCK_START(py_clock, 1000)
 
       // Set up the implementation for Python to call back
       // The pyhdl_ether_test acts as the host for SV execution logic
-      test = pyhdl_ether_test::mk(vif.tb, py_runner);
+      test = pyhdl_ether_test::mk(vif.tb, py_runner, py_clock);
 
       $display("[%0t] Calling start_test from Python...", $time);
       py_runner.start_test(test.api.m_obj);

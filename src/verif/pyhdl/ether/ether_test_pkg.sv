@@ -7,7 +7,7 @@ package ether_test_pkg;
    interface class serializable_object;
       pure virtual function byte_q_t to_bytes();
       pure virtual function void from_bytes(byte_q_t data);
-   endclass
+      endclass
 
    // -----------------------------------------------------------------------
    // ether_object: Pure SV data class for Ethernet frames.
@@ -32,6 +32,7 @@ package ether_test_pkg;
          for (int i = 1; i >= 0; i--) data.push_back(ethertype[i*8+:8]);
          // Payload
          foreach (payload[i]) data.push_back(payload[i]);
+         return data;
       endfunction
 
       // Populate fields from a byte queue in network order.
@@ -64,10 +65,17 @@ package ether_test_pkg;
       function py_object to_bytes();
          byte unsigned data[$];
          py_list lst;
+         PyObject py_long;
 
          data = obj.to_bytes();
          lst  = new();
-         foreach (data[i]) lst.append_obj(PyLong_FromLong(longint'(data[i])));
+         // PyList_Append increments the element's refcount, so we must drop
+         // our own reference from PyLong_FromLong to avoid a slow leak.
+         foreach (data[i]) begin
+            py_long = PyLong_FromLong(longint'(data[i]));
+            lst.append_obj(py_long);
+            Py_DecRef(py_long);
+         end
 
          return lst;
       endfunction
@@ -99,16 +107,22 @@ package ether_test_pkg;
       virtual ether_if.tb vif;
       TestAPI_imp_impl #(pyhdl_ether_test) api;
       TestRunnerAPI_exp_if py_runner;
+      SimClockAPI_exp_if py_clock;
 
       protected
-      function new(virtual ether_if.tb vif, TestRunnerAPI_exp_if py_runner);
+      function new(virtual ether_if.tb  vif,
+                   TestRunnerAPI_exp_if py_runner,
+                   SimClockAPI_exp_if   py_clock);
          this.vif = vif;
          this.py_runner = py_runner;
+         this.py_clock = py_clock;
          this.api = new(this);
       endfunction
 
-      static function pyhdl_ether_test mk(virtual ether_if.tb vif, TestRunnerAPI_exp_if py_runner);
-         pyhdl_ether_test t = new(vif, py_runner);
+      static function pyhdl_ether_test mk(virtual ether_if.tb  vif,
+                                          TestRunnerAPI_exp_if py_runner,
+                                          SimClockAPI_exp_if   py_clock);
+         pyhdl_ether_test t = new(vif, py_runner, py_clock);
 
          // Fork a background process to monitor outputs
          fork
@@ -146,7 +160,7 @@ package ether_test_pkg;
                py_data = s.to_bytes();
 
                $display("[%0t] SV Monitor: Forwarding reconstructed packet back to Python", $time);
-               py_runner.set_sim_time(longint'($time));
+               py_clock.advance_to(longint'($time));
                py_runner.check_packet(py_data.borrow());
                py_data.dispose();
             end
@@ -193,7 +207,7 @@ package ether_test_pkg;
          // Give monitor thread time to catch it and wait a bit after
          repeat (5) @(vif.cb);
          $display("[%0t] SV Driver: Finished packet transmission sequence.", $time);
-         py_runner.set_sim_time(longint'($time));
+         py_clock.advance_to(longint'($time));
       endtask
 
    endclass

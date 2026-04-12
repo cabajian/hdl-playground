@@ -100,7 +100,8 @@ def _build_config(test_name: str, *, waves: bool = False):
         # e.g. "pyhdl_counter" -> "counter"
         variant_sub = test_name.split("_", 1)[1]
         verif_sub = VERIF_DIR / "pyhdl" / variant_sub
-        python_path = f"{VENV_SITE_PACKAGES}:{verif_sub}"
+        pyhdl_shared = VERIF_DIR / "pyhdl"
+        python_path = f"{VENV_SITE_PACKAGES}:{pyhdl_shared}:{verif_sub}"
 
         pyhdl_share = _pyhdl_if_query("share")
         pyhdl_libs = _pyhdl_if_query("libs")
@@ -109,6 +110,7 @@ def _build_config(test_name: str, *, waves: bool = False):
         flags += [
             "-Wno-fatal", "-Wno-UNUSEDSIGNAL",
             f"+incdir+{pyhdl_share}/dpi",
+            f"+incdir+{pyhdl_shared}",
             "+define+HAVE_PYHDL_IF",
             "-LDFLAGS",
             f"-L{pyhdl_libs_dir} -lpyhdl_if -Wl,-rpath,{pyhdl_libs_dir} -Wl,--export-dynamic",
@@ -120,7 +122,8 @@ def _build_config(test_name: str, *, waves: bool = False):
         srcs.append(str(api_pkg))
         flags.append(f"+incdir+{build_dir}")
 
-        # Extra verif sources
+        # Extra verif sources (shared + variant-specific)
+        srcs.extend([str(f) for f in pyhdl_shared.glob("*.sv")])
         srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
 
     else:  # basic
@@ -167,11 +170,14 @@ def _pyhdl_api_gen(cfg, test_name):
     env = os.environ.copy()
     env["PYTHONPATH"] = cfg["python_path"]
 
-    # Discover all python modules in the pyhdl verif sub-directory
+    # Discover python modules: shared (src/verif/pyhdl/) + variant-specific
     variant_sub = test_name.split("_", 1)[1]
     verif_sub = VERIF_DIR / "pyhdl" / variant_sub
-    modules = [f.stem for f in verif_sub.glob("*.py") if f.is_file()]
-    
+    pyhdl_shared = VERIF_DIR / "pyhdl"
+    shared_modules = [f.stem for f in pyhdl_shared.glob("*.py") if f.is_file()]
+    variant_modules = [f.stem for f in verif_sub.glob("*.py") if f.is_file()]
+    modules = shared_modules + variant_modules
+
     module_args = []
     for m in modules:
         module_args.extend(["-m", m])

@@ -2,3 +2,4 @@ pyhdl-if
 pytest
 pytest-timeout
 scapy
+simpy

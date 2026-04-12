@@ -12,3 +12,4 @@ def test_pyhdl(waves):
     assert sim.returncode == 0, f"Simulation failed:\n{sim.stderr}"
     assert "Simulation finished in SV." in sim.stdout, "Expected finish message not found"
     assert "$error" not in sim.stdout.lower(), f"Errors found in simulation output:\n{sim.stdout}"
+    assert "[ERROR]" not in sim.stdout, f"Python-side errors in simulation output:\n{sim.stdout}"
