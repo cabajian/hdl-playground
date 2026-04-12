@@ -65,8 +65,9 @@ def _build_config(test_name: str, *, waves: bool = False):
 
     build_dir = BUILD_BASE / test_name
     top_module_map = {
-        "basic": "tb_counter", 
-        "uvm": "tb_counter_uvm", 
+        "basic": "tb_counter",
+        "basic_ether": "tb_ether_basic",
+        "uvm": "tb_counter_uvm",
         "pyhdl_counter": "tb_counter_pyhdl",
         "pyhdl_ether": "tb_ether_pyhdl"
     }
@@ -126,10 +127,10 @@ def _build_config(test_name: str, *, waves: bool = False):
         srcs.extend([str(f) for f in pyhdl_shared.glob("*.sv")])
         srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
 
-    else:  # basic
+    else:  # basic / basic_ether
         verif_sub = VERIF_DIR / "basic"
         flags += ["-Wno-fatal", "-Wno-UNUSEDSIGNAL"]
-        srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
+        srcs.append(str(verif_sub / f"{top}.sv"))
 
     # Common sources (RTL)
     srcs.append(str(RTL_DIR / "counter.sv"))
