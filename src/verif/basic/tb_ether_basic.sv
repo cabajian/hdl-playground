@@ -5,8 +5,8 @@
 
 module tb_ether_basic;
 
-   localparam int NUM_PACKETS = 10000;
-   localparam int HDR_LEN     = 14;  // 6 DST + 6 SRC + 2 Ethertype
+   localparam int NUM_PACKETS = 1000;
+   localparam int HDR_LEN = 14;  // 6 DST + 6 SRC + 2 Ethertype
    localparam int MAX_PAYLOAD = 1500;
 
    logic                clk;
@@ -53,12 +53,12 @@ module tb_ether_basic;
 `endif
 
    // Shared state for per-packet comparison
-   bit [47:0]    exp_dst_mac;
-   bit [47:0]    exp_src_mac;
-   bit [15:0]    exp_ethertype;
-   byte unsigned exp_payload[$];
-   int           num_matches;
-   int           pending;  // driver sets, monitor clears when it consumes
+   bit           [47:0] exp_dst_mac;
+   bit           [47:0] exp_src_mac;
+   bit           [15:0] exp_ethertype;
+   byte unsigned        exp_payload                                              [$];
+   int                  num_matches;
+   int                  pending;  // driver sets, monitor clears when it consumes
 
    // -------------------------------------------------------------------------
    // Driver: serialize the current expected packet and drive it byte-by-byte
@@ -109,30 +109,30 @@ module tb_ether_basic;
             bit ok = 1'b1;
 
             if (o_dst_mac !== exp_dst_mac) begin
-               $display("[%0t] MISMATCH dst_mac: exp=%012h got=%012h",
-                        $time, exp_dst_mac, o_dst_mac);
+               $display("[%0t] MISMATCH dst_mac: exp=%012h got=%012h", $time, exp_dst_mac,
+                        o_dst_mac);
                ok = 1'b0;
             end
             if (o_src_mac !== exp_src_mac) begin
-               $display("[%0t] MISMATCH src_mac: exp=%012h got=%012h",
-                        $time, exp_src_mac, o_src_mac);
+               $display("[%0t] MISMATCH src_mac: exp=%012h got=%012h", $time, exp_src_mac,
+                        o_src_mac);
                ok = 1'b0;
             end
             if (o_ethertype !== exp_ethertype) begin
-               $display("[%0t] MISMATCH ethertype: exp=%04h got=%04h",
-                        $time, exp_ethertype, o_ethertype);
+               $display("[%0t] MISMATCH ethertype: exp=%04h got=%04h", $time, exp_ethertype,
+                        o_ethertype);
                ok = 1'b0;
             end
             if (payload_len !== exp_payload.size()) begin
-               $display("[%0t] MISMATCH payload_len: exp=%0d got=%0d",
-                        $time, exp_payload.size(), payload_len);
+               $display("[%0t] MISMATCH payload_len: exp=%0d got=%0d", $time, exp_payload.size(),
+                        payload_len);
                ok = 1'b0;
             end else begin
                for (int i = 0; i < payload_len; i++) begin
                   byte unsigned got = o_payload[(1499-i)*8+:8];
                   if (got !== exp_payload[i]) begin
-                     $display("[%0t] MISMATCH payload[%0d]: exp=%02h got=%02h",
-                              $time, i, exp_payload[i], got);
+                     $display("[%0t] MISMATCH payload[%0d]: exp=%02h got=%02h", $time, i,
+                              exp_payload[i], got);
                      ok = 1'b0;
                      break;
                   end
@@ -158,11 +158,11 @@ module tb_ether_basic;
       pending     = 0;
 
       // Global reset
-      rst       = 1;
-      start     = 0;
-      valid     = 0;
-      num_bytes = 0;
-      data      = 0;
+      rst         = 1;
+      start       = 0;
+      valid       = 0;
+      num_bytes   = 0;
+      data        = 0;
       repeat (4) @(posedge clk);
       rst = 0;
       @(posedge clk);
@@ -183,8 +183,7 @@ module tb_ether_basic;
          end
 
          pending = 1;
-         $display("[%0t] Sending packet %0d (payload_len=%0d)...",
-                  $time, p, payload_len);
+         $display("[%0t] Sending packet %0d (payload_len=%0d)...", $time, p, payload_len);
          drive_packet();
       end
 

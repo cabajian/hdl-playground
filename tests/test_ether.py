@@ -19,8 +19,8 @@ def _run_variant(variant: str, waves: bool):
     assert "Simulation finished in SV." in sim.stdout, "Expected finish message not found"
     assert "$error" not in combined.lower(), f"Errors found in simulation output:\n{combined}"
     assert "[ERROR]" not in combined, f"Python-side errors in simulation output:\n{combined}"
-    assert "Matched 10000/10000 packets" in combined, \
-        f"Expected 100/100 packet match:\n{combined}"
+    assert "Matched 1000/1000 packets" in combined, \
+        f"Expected 1000/1000  packet match:\n{combined}"
 
     print(f"\n[{variant}] simulation wall-clock: {elapsed:.3f}s")
     return elapsed

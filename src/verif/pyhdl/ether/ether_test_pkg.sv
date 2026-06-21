@@ -4,9 +4,11 @@ package ether_test_pkg;
 
    typedef byte unsigned byte_q_t[$];
 
-   interface class serializable_object;
-      pure virtual function byte_q_t to_bytes();
-      pure virtual function void from_bytes(byte_q_t data);
+      interface class serializable_object; pure virtual
+      function byte_q_t to_bytes()
+      ; pure virtual
+      function void from_bytes(byte_q_t data)
+      ;
       endclass
 
    // -----------------------------------------------------------------------
@@ -110,18 +112,16 @@ package ether_test_pkg;
       SimClockAPI_exp_if py_clock;
 
       protected
-      function new(virtual ether_if.tb  vif,
-                   TestRunnerAPI_exp_if py_runner,
-                   SimClockAPI_exp_if   py_clock);
+      function new(virtual ether_if.tb vif, TestRunnerAPI_exp_if py_runner,
+                   SimClockAPI_exp_if py_clock);
          this.vif = vif;
          this.py_runner = py_runner;
          this.py_clock = py_clock;
          this.api = new(this);
       endfunction
 
-      static function pyhdl_ether_test mk(virtual ether_if.tb  vif,
-                                          TestRunnerAPI_exp_if py_runner,
-                                          SimClockAPI_exp_if   py_clock);
+      static function pyhdl_ether_test mk(virtual ether_if.tb vif, TestRunnerAPI_exp_if py_runner,
+                                          SimClockAPI_exp_if py_clock);
          pyhdl_ether_test t = new(vif, py_runner, py_clock);
 
          // Fork a background process to monitor outputs
