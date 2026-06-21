@@ -10,7 +10,7 @@ from conftest import compile_sim, run_sim
 
 def test_basic(waves):
     """Compile and run the basic (non-UVM, non-PyHDL) testbench."""
-    cfg, comp = compile_sim("basic", waves=waves)
+    cfg, comp = compile_sim("tb_counter_basic", waves=waves)
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
@@ -24,7 +24,7 @@ def test_basic(waves):
 
 def test_uvm(waves):
     """Compile and run the UVM testbench."""
-    cfg, comp = compile_sim("uvm", waves=waves)
+    cfg, comp = compile_sim("tb_counter_uvm", waves=waves)
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
@@ -39,7 +39,7 @@ def test_uvm(waves):
 
 def test_pyhdl(waves):
     """Compile and run the PyHDL-IF testbench."""
-    cfg, comp = compile_sim("pyhdl_counter", waves=waves)
+    cfg, comp = compile_sim("tb_counter_pyhdl", waves=waves)
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)

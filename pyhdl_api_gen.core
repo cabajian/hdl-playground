@@ -1,0 +1,9 @@
+CAPI=2:
+name: ::pyhdl_api_gen:0
+description: FuseSoC generator — runs pyhdl-if api-gen-sv to produce an SV API package
+
+generators:
+  pyhdl_api_gen:
+    interpreter: python3
+    command: scripts/pyhdl_api_gen.py
+    description: Generate an SV package from PyHDL-IF-decorated Python modules

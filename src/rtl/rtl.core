@@ -1,0 +1,14 @@
+CAPI=2:
+name: ::hdl_playground_rtl:0
+description: HDL playground RTL sources
+
+filesets:
+  rtl:
+    files:
+      - counter.sv
+      - ether.sv
+    file_type: systemVerilogSource
+
+targets:
+  default:
+    filesets: [rtl]

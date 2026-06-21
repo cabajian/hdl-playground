@@ -1,16 +1,13 @@
 """Shared fixtures for HDL simulation tests."""
 
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
-
-# ---------------------------------------------------------------------------
-# CLI options
-# ---------------------------------------------------------------------------
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -21,140 +18,129 @@ def pytest_addoption(parser):
     )
 
 
-# ---------------------------------------------------------------------------
-# Path helpers
-# ---------------------------------------------------------------------------
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-RTL_DIR = PROJECT_ROOT / "src" / "rtl"
-VERIF_DIR = PROJECT_ROOT / "src" / "verif"
 BUILD_BASE = PROJECT_ROOT / "build"
 
-VENV_SITE_PACKAGES = Path(os.environ.get('VIRTUAL_ENV', sys.prefix)) / "lib" / "python3.12" / "site-packages"
-PYHDL_IF_BIN = Path(os.environ.get('VIRTUAL_ENV', sys.prefix)) / "bin" / "pyhdl-if"
+VENV_SITE_PACKAGES = (
+    Path(os.environ.get("VIRTUAL_ENV", sys.prefix))
+    / "lib"
+    / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    / "site-packages"
+)
+PYHDL_IF_BIN = Path(os.environ.get("VIRTUAL_ENV", sys.prefix)) / "bin" / "pyhdl-if"
+
+# ---------------------------------------------------------------------------
+# FuseSoC discovery
+# ---------------------------------------------------------------------------
+
+_core_cache: dict[str, dict] = {}
 
 
-def _run(cmd: list[str], *, env=None, cwd=None, log_path: Path | None = None) -> subprocess.CompletedProcess:
-    """Run a command, optionally tee-ing output to *log_path*."""
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=cwd,
-    )
-    if log_path:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(result.stdout + result.stderr)
+def _fusesoc(*args) -> str:
+    """Run a fusesoc command rooted at PROJECT_ROOT and return stdout."""
+    cmd = ["fusesoc", "--cores-root", str(PROJECT_ROOT), *args]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
+    if result.returncode != 0:
+        raise RuntimeError(f"fusesoc {' '.join(args)} failed:\n{result.stderr}")
+    return result.stdout
+
+
+def list_tb_cores() -> list[str]:
+    """Return the short core names (e.g. 'tb_ether_pyhdl') for all tb_* cores."""
+    names = []
+    for line in _fusesoc("list-cores").splitlines():
+        first = line.split()[0] if line.split() else ""
+        if first.startswith("::tb_"):
+            # "::tb_ether_pyhdl:0" → "tb_ether_pyhdl"
+            names.append(first.lstrip(":").rsplit(":", 1)[0])
+    return names
+
+
+def query_core(core_name: str) -> dict:
+    """Query fusesoc for *core_name* and return {vlnv, core_root, targets, toplevel}.
+
+    Results are cached so repeated calls within a session are free.
+    """
+    if core_name in _core_cache:
+        return _core_cache[core_name]
+
+    vlnv = f"::{core_name}:0"
+    info_text = _fusesoc("core-info", vlnv)
+
+    core_root = None
+    core_file = None
+    targets: list[str] = []
+    in_targets = False
+
+    for line in info_text.splitlines():
+        stripped = line.strip()
+        if stripped == "Targets:":
+            in_targets = True
+            continue
+        if in_targets:
+            if not stripped:
+                in_targets = False
+                continue
+            targets.append(stripped.split(":")[0].strip())
+        elif line.startswith("Core root:"):
+            core_root = Path(line.split("Core root:", 1)[1].strip())
+        elif line.startswith("Core file:"):
+            core_file = line.split("Core file:", 1)[1].strip()
+
+    core_path = core_root / core_file
+    data = yaml.safe_load(core_path.read_text())
+    toplevel = data.get("targets", {}).get("sim", {}).get("toplevel", "")
+
+    result = {
+        "vlnv": vlnv,
+        "core_root": core_root,
+        "targets": targets,
+        "toplevel": toplevel,
+    }
+    _core_cache[core_name] = result
     return result
 
 
-def _pyhdl_if_query(flag: str) -> str:
-    """Call ``pyhdl-if <flag>`` and return stripped output."""
-    return subprocess.check_output(
-        [str(PYHDL_IF_BIN), flag], text=True
-    ).strip()
+# ---------------------------------------------------------------------------
+# Environment helpers
+# ---------------------------------------------------------------------------
+
+def _build_env(core_name: str) -> dict:
+    """Return os.environ copy with variables needed by the core files."""
+    env = os.environ.copy()
+    env["PROJECT_ROOT"] = str(PROJECT_ROOT)
+    env["VENV_SITE_PACKAGES"] = str(VENV_SITE_PACKAGES)
+
+    if "pyhdl" in core_name:
+        pyhdl_share = subprocess.check_output(
+            [str(PYHDL_IF_BIN), "share"], text=True
+        ).strip()
+        pyhdl_libs = subprocess.check_output(
+            [str(PYHDL_IF_BIN), "libs"], text=True
+        ).strip()
+        env["PYHDL_IF_SHARE"] = pyhdl_share
+        env["PYHDL_IF_LIBS_DIR"] = str(Path(pyhdl_libs).parent)
+
+    if "uvm" in core_name:
+        env.setdefault("UVM_ROOT", str(Path.home() / "tools" / "uvm-1.2" / "src"))
+
+    return env
+
+
+def _python_path(core_name: str, core_root: Path) -> str:
+    """Return the PYTHONPATH string needed to run the simulation binary."""
+    if "pyhdl" in core_name:
+        # core_root is src/verif/pyhdl/<variant>/; parent is the shared pyhdl dir
+        return ":".join([
+            str(VENV_SITE_PACKAGES),
+            str(core_root.parent),
+            str(core_root),
+        ])
+    return str(VENV_SITE_PACKAGES)
 
 
 # ---------------------------------------------------------------------------
-# Per-variant configuration
-# ---------------------------------------------------------------------------
-
-def _build_config(test_name: str, *, waves: bool = False):
-    """Return (verilator_flags, srcs, env_extras) for *test_name*."""
-
-    build_dir = BUILD_BASE / test_name
-    top_module_map = {
-        "basic": "tb_counter",
-        "basic_ether": "tb_ether_basic",
-        "uvm": "tb_counter_uvm",
-        "pyhdl_counter": "tb_counter_pyhdl",
-        "pyhdl_ether": "tb_ether_pyhdl"
-    }
-    top = top_module_map[test_name]
-
-    flags = ["--binary", "-Wall", "-j", "0"]
-    srcs = []
-    python_path = str(VENV_SITE_PACKAGES)
-
-    if waves:
-        vcd_path = str(build_dir / "waves.vcd")
-        flags += ["--trace", f"+define+WAVES", f'+define+VCD_FILE="{vcd_path}"']
-
-    # -- variant-specific flags/sources --
-    if test_name == "uvm":
-        uvm_root = os.environ.get("UVM_ROOT", f"{str(Path.home())}/tools/uvm-1.2/src")
-        flags += [
-            f"+incdir+{uvm_root}",
-            "+define+UVM_NO_DPI",
-            "-Wno-fatal", "-Wno-DECLFILENAME", "-Wno-IMPORTSTAR",
-            "-Wno-WIDTHTRUNC", "-Wno-UNUSEDSIGNAL", "-Wno-UNSIGNED",
-            "-Wno-LITENDIAN", "-Wno-VARHIDDEN", "-Wno-TIMESCALEMOD",
-        ]
-        srcs.append(f"{uvm_root}/uvm_pkg.sv")
-        verif_sub = VERIF_DIR / "uvm"
-        flags.append(f"+incdir+{verif_sub}")
-        srcs.append(str(verif_sub / "counter_verif_pkg.sv"))
-        srcs.append(str(verif_sub / "tb_counter_uvm.sv"))
-
-    elif test_name.startswith("pyhdl"):
-        # e.g. "pyhdl_counter" -> "counter"
-        variant_sub = test_name.split("_", 1)[1]
-        verif_sub = VERIF_DIR / "pyhdl" / variant_sub
-        pyhdl_shared = VERIF_DIR / "pyhdl"
-        python_path = f"{VENV_SITE_PACKAGES}:{pyhdl_shared}:{verif_sub}"
-
-        pyhdl_share = _pyhdl_if_query("share")
-        pyhdl_libs = _pyhdl_if_query("libs")
-        pyhdl_libs_dir = str(Path(pyhdl_libs).parent)
-
-        flags += [
-            "-Wno-fatal", "-Wno-UNUSEDSIGNAL",
-            f"+incdir+{pyhdl_share}/dpi",
-            f"+incdir+{pyhdl_shared}",
-            "+define+HAVE_PYHDL_IF",
-            "-LDFLAGS",
-            f"-L{pyhdl_libs_dir} -lpyhdl_if -Wl,-rpath,{pyhdl_libs_dir} -Wl,--export-dynamic",
-        ]
-        srcs.append(f"{pyhdl_share}/dpi/pyhdl_if.sv")
-
-        # API-gen package
-        api_pkg = build_dir / f"{top}_api_pkg.sv"
-        srcs.append(str(api_pkg))
-        flags.append(f"+incdir+{build_dir}")
-
-        # Extra verif sources (shared + variant-specific)
-        srcs.extend([str(f) for f in pyhdl_shared.glob("*.sv")])
-        srcs.extend([str(f) for f in verif_sub.glob("*.sv")])
-
-    else:  # basic / basic_ether
-        verif_sub = VERIF_DIR / "basic"
-        flags += ["-Wno-fatal", "-Wno-UNUSEDSIGNAL"]
-        srcs.append(str(verif_sub / f"{top}.sv"))
-
-    # Common sources (RTL)
-    srcs.append(str(RTL_DIR / "counter.sv"))
-    if "ether" in test_name:
-        srcs.append(str(RTL_DIR / "ether.sv"))
-
-    # Deduplicate
-    unique_srcs = []
-    for s in srcs:
-        if s not in unique_srcs:
-            unique_srcs.append(s)
-    srcs = unique_srcs
-
-    return {
-        "top": top,
-        "build_dir": build_dir,
-        "flags": flags,
-        "srcs": srcs,
-        "python_path": python_path,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
+# Public API used by tests
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -162,70 +148,60 @@ def waves(request):
     return request.config.getoption("--waves")
 
 
-def _pyhdl_api_gen(cfg, test_name):
-    """Run pyhdl-if api-gen-sv for the pyhdl test variant."""
-    build_dir = cfg["build_dir"]
-    top = cfg["top"]
+def compile_sim(core_name: str, *, waves: bool = False) -> tuple[dict, subprocess.CompletedProcess]:
+    """Compile the simulation for *core_name* (e.g. 'tb_ether_pyhdl').
+
+    Returns (cfg, compile_result) where cfg is passed to run_sim().
+    """
+    info = query_core(core_name)
+    core_root: Path = info["core_root"]
+
+    target = "sim_waves" if (waves and "sim_waves" in info["targets"]) else "sim"
+
+    build_dir = BUILD_BASE / core_name
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    env["PYTHONPATH"] = cfg["python_path"]
-
-    # Discover python modules: shared (src/verif/pyhdl/) + variant-specific
-    variant_sub = test_name.split("_", 1)[1]
-    verif_sub = VERIF_DIR / "pyhdl" / variant_sub
-    pyhdl_shared = VERIF_DIR / "pyhdl"
-    shared_modules = [f.stem for f in pyhdl_shared.glob("*.py") if f.is_file()]
-    variant_modules = [f.stem for f in verif_sub.glob("*.py") if f.is_file()]
-    modules = shared_modules + variant_modules
-
-    module_args = []
-    for m in modules:
-        module_args.extend(["-m", m])
-
-    api_pkg_path = build_dir / f"{top}_api_pkg.sv"
-    cmd = [
-        str(PYHDL_IF_BIN), "api-gen-sv",
-        *module_args,
-        "-p", f"{top}_api_pkg",
-        "-o", str(api_pkg_path),
-    ]
-    
-    result = _run(cmd, env=env, cwd=str(PROJECT_ROOT))
-    if result.returncode != 0:
-        raise RuntimeError(f"pyhdl-if api-gen-sv failed:\n{result.stderr}")
-
-
-def compile_sim(test_name: str, *, waves: bool = False):
-    """Compile the simulation for *test_name*. Returns (cfg, compile_result)."""
-    cfg = _build_config(test_name, waves=waves)
-    build_dir = cfg["build_dir"]
-    build_dir.mkdir(parents=True, exist_ok=True)
-
-    # API gen for pyhdl
-    if test_name.startswith("pyhdl"):
-        _pyhdl_api_gen(cfg, test_name)
+    env = _build_env(core_name)
 
     cmd = [
-        "verilator", *cfg["flags"],
-        "--Mdir", str(build_dir / "obj_dir"),
-        "--top-module", cfg["top"],
-        *cfg["srcs"],
-        f"-I{RTL_DIR}",
-        f"-I{build_dir}",
+        "fusesoc",
+        "--cores-root", str(PROJECT_ROOT),
+        "run",
+        "--no-export",
+        "--resolve-env-vars-early",
+        "--target", target,
+        "--work-root", str(build_dir),
+        "--build",
+        info["vlnv"],
     ]
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, env=env, cwd=str(PROJECT_ROOT)
+    )
 
-    result = _run(cmd, log_path=build_dir / "build.log", cwd=str(PROJECT_ROOT))
+    cfg = {
+        "top": info["toplevel"],
+        "build_dir": build_dir,
+        "python_path": _python_path(core_name, core_root),
+        "waves": waves,
+    }
+    (build_dir / "build.log").write_text(result.stdout + result.stderr)
     return cfg, result
 
 
-def run_sim(cfg):
-    """Run the compiled simulation. Returns subprocess result."""
-    build_dir = cfg["build_dir"]
-    exe = build_dir / "obj_dir" / f"V{cfg['top']}"
+def run_sim(cfg: dict) -> subprocess.CompletedProcess:
+    """Run the compiled simulation binary. Returns the subprocess result."""
+    build_dir: Path = cfg["build_dir"]
+    exe = build_dir / f"V{cfg['top']}"
 
     env = os.environ.copy()
     env["PYTHONPATH"] = cfg["python_path"]
 
-    result = _run([str(exe)], env=env, log_path=build_dir / "sim.log", cwd=str(PROJECT_ROOT))
+    args = [str(exe)]
+    if cfg.get("waves"):
+        args.append(f"+waves_vcd={build_dir / 'waves.vcd'}")
+
+    result = subprocess.run(
+        args, capture_output=True, text=True, env=env, cwd=str(PROJECT_ROOT)
+    )
+    (build_dir / "sim.log").write_text(result.stdout + result.stderr)
     return result

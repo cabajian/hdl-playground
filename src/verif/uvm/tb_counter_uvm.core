@@ -1,0 +1,67 @@
+CAPI=2:
+name: ::tb_counter_uvm:0
+description: UVM counter testbench (Verilator)
+
+# Required environment variable:
+#   UVM_ROOT — path to UVM 1.2 source (default: ~/tools/uvm-1.2/src)
+
+filesets:
+  tb:
+    files:
+      - ${UVM_ROOT}/uvm_pkg.sv
+      - counter_verif_pkg.sv
+      - tb_counter_uvm.sv
+    file_type: systemVerilogSource
+    depend:
+      - "::hdl_playground_rtl:0"
+
+targets:
+  sim:
+    default_tool: verilator
+    filesets: [tb]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -j
+          - "0"
+          - +incdir+${UVM_ROOT}
+          - +incdir+${PROJECT_ROOT}/src/verif/uvm
+          - +define+UVM_NO_DPI
+          - -Wno-fatal
+          - -Wno-DECLFILENAME
+          - -Wno-IMPORTSTAR
+          - -Wno-WIDTHTRUNC
+          - -Wno-UNUSEDSIGNAL
+          - -Wno-UNSIGNED
+          - -Wno-LITENDIAN
+          - -Wno-VARHIDDEN
+          - -Wno-TIMESCALEMOD
+    toplevel: tb_counter_uvm
+
+  sim_waves:
+    default_tool: verilator
+    filesets: [tb]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -j
+          - "0"
+          - +incdir+${UVM_ROOT}
+          - +incdir+${PROJECT_ROOT}/src/verif/uvm
+          - +define+UVM_NO_DPI
+          - -Wno-fatal
+          - -Wno-DECLFILENAME
+          - -Wno-IMPORTSTAR
+          - -Wno-WIDTHTRUNC
+          - -Wno-UNUSEDSIGNAL
+          - -Wno-UNSIGNED
+          - -Wno-LITENDIAN
+          - -Wno-VARHIDDEN
+          - -Wno-TIMESCALEMOD
+          - --trace
+          - +define+WAVES
+    toplevel: tb_counter_uvm

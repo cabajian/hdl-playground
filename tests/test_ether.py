@@ -28,9 +28,9 @@ def _run_variant(variant: str, waves: bool):
 
 def test_basic(waves):
     """Compile and run the pure-SV ether testbench (no Python)."""
-    _run_variant("basic_ether", waves)
+    _run_variant("tb_ether_basic", waves)
 
 
 def test_pyhdl(waves):
     """Compile and run the PyHDL-IF ether testbench."""
-    _run_variant("pyhdl_ether", waves)
+    _run_variant("tb_ether_pyhdl", waves)

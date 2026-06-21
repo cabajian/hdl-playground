@@ -50,8 +50,10 @@ module tb_counter_uvm;
    end
 
 `ifdef WAVES
+   string _waves_vcd;
    initial begin
-      $dumpfile(`VCD_FILE);
+      if (!$value$plusargs("waves_vcd=%s", _waves_vcd)) _waves_vcd = "waves.vcd";
+      $dumpfile(_waves_vcd);
       $dumpvars(0, tb_counter_uvm);
    end
 `endif

@@ -1,0 +1,92 @@
+CAPI=2:
+name: ::tb_counter_pyhdl:0
+description: PyHDL-IF counter testbench (Verilator)
+
+# Required environment variables (set by conftest.py or the shell):
+#   PROJECT_ROOT        — absolute path to the repo root
+#   PYHDL_IF_SHARE      — output of: pyhdl-if share
+#   PYHDL_IF_LIBS_DIR   — directory containing libpyhdl_if.so (dirname of: pyhdl-if libs)
+#   VENV_SITE_PACKAGES  — path to the active venv's site-packages
+
+filesets:
+  gen_dep:
+    depend:
+      - "::pyhdl_api_gen:0"
+  tb:
+    files:
+      - counter_if.sv
+      - counter_test_pkg.sv
+      - tb_counter_pyhdl.sv
+    file_type: systemVerilogSource
+    depend:
+      - "::hdl_playground_rtl:0"
+
+generate:
+  api_pkg:
+    generator: pyhdl_api_gen
+    position: first
+    parameters:
+      shared_dir: ../
+      variant_dir: .
+      package: tb_counter_pyhdl_api_pkg
+      pythonpath: "${VENV_SITE_PACKAGES}:${PROJECT_ROOT}/src/verif/pyhdl:${PROJECT_ROOT}/src/verif/pyhdl/counter"
+      pyhdl_share: "${PYHDL_IF_SHARE}"
+
+targets:
+  sim:
+    default_tool: verilator
+    filesets: [gen_dep, tb]
+    generate: [api_pkg]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -Wall
+          - -Wno-fatal
+          - -Wno-UNUSEDSIGNAL
+          - -j
+          - "0"
+          - +incdir+${PYHDL_IF_SHARE}/dpi
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/counter
+          - +define+HAVE_PYHDL_IF
+          - -LDFLAGS
+          - -L${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -lpyhdl_if
+          - -LDFLAGS
+          - -Wl,-rpath,${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -Wl,--export-dynamic
+    toplevel: tb_counter_pyhdl
+
+  sim_waves:
+    default_tool: verilator
+    filesets: [gen_dep, tb]
+    generate: [api_pkg]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -Wall
+          - -Wno-fatal
+          - -Wno-UNUSEDSIGNAL
+          - -j
+          - "0"
+          - +incdir+${PYHDL_IF_SHARE}/dpi
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/counter
+          - +define+HAVE_PYHDL_IF
+          - -LDFLAGS
+          - -L${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -lpyhdl_if
+          - -LDFLAGS
+          - -Wl,-rpath,${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -Wl,--export-dynamic
+          - --trace
+          - +define+WAVES
+    toplevel: tb_counter_pyhdl

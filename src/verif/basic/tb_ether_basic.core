@@ -1,0 +1,44 @@
+CAPI=2:
+name: ::tb_ether_basic:0
+description: Basic Ethernet testbench (Verilator)
+
+filesets:
+  tb:
+    files:
+      - tb_ether_basic.sv
+    file_type: systemVerilogSource
+    depend:
+      - "::hdl_playground_rtl:0"
+
+targets:
+  sim:
+    default_tool: verilator
+    filesets: [tb]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -Wall
+          - -Wno-fatal
+          - -Wno-UNUSEDSIGNAL
+          - -j
+          - "0"
+    toplevel: tb_ether_basic
+
+  sim_waves:
+    default_tool: verilator
+    filesets: [tb]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -Wall
+          - -Wno-fatal
+          - -Wno-UNUSEDSIGNAL
+          - -j
+          - "0"
+          - --trace
+          - +define+WAVES
+    toplevel: tb_ether_basic
