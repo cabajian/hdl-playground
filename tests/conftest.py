@@ -192,6 +192,13 @@ def run_sim(cfg: dict, plusargs: list[str] | None = None) -> subprocess.Complete
     """Run the compiled simulation binary. Returns the subprocess result.
 
     `plusargs` are appended verbatim (e.g. ["+UVM_TESTNAME=foo", "+num_msgs=8"]).
+
+    The child's stderr is folded into its stdout so that the SystemVerilog and
+    Python halves of the run land in one pipe and stay in the order they were
+    written. Capturing them separately and concatenating afterwards would
+    produce a file with every UVM line before every Python line regardless of
+    when each was emitted. `result.stderr` is therefore always None; everything
+    is in `result.stdout`.
     """
     build_dir: Path = cfg["build_dir"]
     exe = build_dir / f"V{cfg['top']}"
@@ -205,7 +212,12 @@ def run_sim(cfg: dict, plusargs: list[str] | None = None) -> subprocess.Complete
     args.extend(plusargs or [])
 
     result = subprocess.run(
-        args, capture_output=True, text=True, env=env, cwd=str(PROJECT_ROOT)
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=env,
+        cwd=str(PROJECT_ROOT),
     )
-    (build_dir / "sim.log").write_text(result.stdout + result.stderr)
+    (build_dir / "sim.log").write_text(result.stdout)
     return result

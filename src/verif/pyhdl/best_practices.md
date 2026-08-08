@@ -317,15 +317,70 @@ if (exp.pack_bytes() != got.pack_bytes()) ...
 
 ### 6.1 Logging, not `print`
 
-Python's `stdout` is buffered inside the simulator process. Use `logging`, which
-flushes and gives you levels and a consistent prefix that tests can grep:
+Use `logging` rather than `print` — you get levels, a prefix that tests can
+grep, and a single place to fix the two problems below. Do **not** call
+`logging.basicConfig` directly; use `sim_logging.configure`, which returns a
+logger and installs the handler that solves both:
 
 ```python
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+import sim_logging
+logger = sim_logging.configure(lambda: SimClock.inst().now_ns(), name="ether")
 ```
 
-Then a pytest assertion can be as simple as `assert "[ERROR]" not in output`.
+Then a pytest assertion can be as simple as `assert "PY_ERROR" not in output`.
+
+**Problem 1: the two halves of the log do not interleave.** Python and the
+simulator share a process but not an output buffer. SystemVerilog `$display`
+goes through C stdio, which block-buffers as soon as stdout is a pipe — which
+is always, under pytest. Python's `logging` writes through its own `io` layer.
+Neither knows about the other, so kilobytes of UVM output can land in the pipe
+long after the Python lines that were emitted between them. `logging` flushing
+*its own* handler does not help; the stale data is in the simulator's buffer.
+
+The fix is to drain C stdio immediately before each Python record. Because both
+languages live in one process, `ctypes` can reach libc directly:
+
+```python
+_fflush = ctypes.CDLL(None).fflush
+...
+def emit(self, record):
+    _fflush(None)          # NULL => flush every open C stream
+    super().emit(record)
+```
+
+Ordering is then exact: SV writes A to its buffer, Python drains A and appends
+its own line, SV writes B, and so on.
+
+Two things have to be true for this to hold. Log to **stderr**, which Python
+keeps line-buffered even when redirected — routing records to a block-buffered
+stdout reintroduces the problem one layer up. And have the *harness* fold the
+child's stderr into its stdout so both land in one pipe:
+
+```python
+subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+```
+
+Capturing the two streams separately and concatenating them afterwards — the
+obvious thing to write — produces a file with every SV line before every Python
+line no matter when each was emitted. Flushing cannot order writes that go to
+two different pipes.
+
+**Problem 2: there is no shared clock.** Wall-clock timestamps are meaningless
+here, since a millisecond of simulation takes seconds to run. Simulation time is
+the only clock both sides agree on, so stamp every record with it, in the same
+`@ <n>ns` form UVM uses:
+
+```
+UVM_INFO tcp_test.sv(198) @ 202835ns: uvm_test_top [uvm_test_top] handshake segments: 2 A->B, 1 B->A
+PY_INFO @ 200835ns: [tcp] after handshake: A=ESTABLISHED B=ESTABLISHED
+```
+
+`sim_logging` does this with a `logging.Filter` that calls a time source you
+supply, so it is re-read per record rather than baked in at call sites. Pass a
+*callable*, not a value. The source is allowed to fail or return `None` — before
+the time service is wired up, and again after `$finish` — and is reported as
+`@ ?ns` rather than being allowed to raise. Logging must never take down the run
+it is reporting on.
 
 ### 6.2 Never use bare `assert` in a runner
 
@@ -436,6 +491,7 @@ Five TCP tests share one compile: 3m34s total instead of ~20 minutes.
 | Queue values corrupt / width varies | element width inferred | §5.3 |
 | Scoreboard always miscompares | `uvm_object::compare()` on handles | §5.4 |
 | Silent hang, no output | bare `assert` or unhandled exception | §6.2 |
+| All Python log lines trail all SV lines | streams captured separately, C stdio unflushed | §6.1 |
 
 ---
 
@@ -483,3 +539,4 @@ serializes differently from one transaction to the next.
 | Serializing SV calls, time pump | `tcp/test_runner.py` (`sv_lock`, `TimeMux`) |
 | Verilator workarounds | `tcp/pyhdl_uvm_vlt.sv`, `tcp/tcp_py_seq.sv` |
 | Queue element widths | `src/verif/pyhdl/uvm_mirror.py` |
+| Logs that interleave with SV | `src/verif/pyhdl/sim_logging.py` |

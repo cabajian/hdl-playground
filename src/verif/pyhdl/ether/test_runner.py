@@ -14,13 +14,13 @@ import zlib
 from scapy.all import Ether, Dot1Q, Raw
 
 import typing
-import logging
 
+import sim_logging
 from sim_clock import SimClock, SimClockAPI  # noqa: F401 (registers SimClockAPI)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+# Simulation time is stamped onto every record, so it interleaves with the SV
+# output rather than trailing it in a block. See sim_logging for why.
+logger = sim_logging.configure(lambda: SimClock.inst().now_ns(), name="ether")
 
 # 7 bytes of preamble followed by the start-of-frame delimiter
 PREAMBLE = bytes([0x55] * 7) + bytes([0xD5])
@@ -98,10 +98,7 @@ class TestRunnerAPI(object):
         self._num_matches = 0
         self._num_checked = 0
         self._clock = SimClock.inst()
-        logger.info(f"[{self._clock.now_ns()}ns] Initialized ether test runner")
-
-    def _t(self) -> str:
-        return f"[{self._clock.now_ns()}ns]"
+        logger.info("Initialized ether test runner")
 
     @hif.exp
     def check_packet(self, py_list: typing.List):
@@ -109,7 +106,7 @@ class TestRunnerAPI(object):
         self._num_checked += 1
         if received != self._expected:
             logger.error(
-                f"{self._t()} Frames did not match.\n"
+                "Frames did not match.\n"
                 f"{'Expected: '.ljust(10)}{self._expected.hex()}\n"
                 f"{'Received: '.ljust(10)}{received.hex()}"
             )
@@ -124,17 +121,17 @@ class TestRunnerAPI(object):
             self._expected = frame
 
             logger.info(
-                f"{self._t()} Sending frame {i} "
+                f"Sending frame {i} "
                 f"(flavour={flavour}, frame={len(frame)}B, stream={len(stream)}B)..."
             )
             await api.drive(list(stream))
 
         if self._num_checked != NUM_PACKETS:
             logger.error(
-                f"{self._t()} Error: DUT extracted {self._num_checked} frames, "
+                f"Error: DUT extracted {self._num_checked} frames, "
                 f"expected {NUM_PACKETS}!"
             )
         if self._num_matches != NUM_PACKETS:
-            logger.error(f"{self._t()} Error: matched {self._num_matches}/{NUM_PACKETS} packets!")
+            logger.error(f"Error: matched {self._num_matches}/{NUM_PACKETS} packets!")
         else:
-            logger.info(f"{self._t()} Matched {self._num_matches}/{NUM_PACKETS} packets")
+            logger.info(f"Matched {self._num_matches}/{NUM_PACKETS} packets")

@@ -41,7 +41,8 @@ def _run(uvm_test: str, cfg, plusargs=None):
     sim = run_sim(cfg, plusargs=args)
     elapsed = time.perf_counter() - t0
 
-    combined = sim.stdout + sim.stderr
+    # run_sim folds stderr into stdout, so this is the whole interleaved log.
+    combined = sim.stdout
     assert sim.returncode == 0, f"Simulation failed:\n{combined[-4000:]}"
 
     counts = _counts(combined)
@@ -49,7 +50,7 @@ def _run(uvm_test: str, cfg, plusargs=None):
     assert counts.get("UVM_FATAL", 1) == 0, f"UVM_FATAL in {uvm_test}:\n{combined[-4000:]}"
     assert counts.get("UVM_ERROR", 1) == 0, f"UVM_ERROR in {uvm_test}:\n{combined[-4000:]}"
     # The Python side logs failures at ERROR level rather than raising
-    assert "[ERROR]" not in combined, f"Python-side errors in {uvm_test}:\n{combined[-4000:]}"
+    assert "PY_ERROR" not in combined, f"Python-side errors in {uvm_test}:\n{combined[-4000:]}"
 
     print(f"\n[{uvm_test}] simulation wall-clock: {elapsed:.3f}s")
     return combined

@@ -67,6 +67,23 @@ pytest tests/test_tcp.py --waves            # + VCD
 At the default `+num_msgs=1000`, `tcp_bidir_test` moves ~250 kB per direction
 across ~3000 segments each way in about 46 s wall clock.
 
+## Reading the log
+
+Each run writes `build/tb_tcp_uvm_pyhdl/sim.log` containing **both** languages'
+output, in the order it was produced and stamped with simulation time:
+
+```
+UVM_INFO ... @ 0ns: reporter [RNTST] Running test tcp_handshake_test...
+PY_INFO @ 100ns: [tcp] open: A=SYN_SENT B=LISTEN
+PY_INFO @ 200835ns: [tcp] after handshake: A=ESTABLISHED B=ESTABLISHED
+UVM_INFO tcp_test.sv(198) @ 202835ns: uvm_test_top [uvm_test_top] handshake segments: 2 A->B, 1 B->A
+```
+
+`PY_` lines come from Python, `UVM_` from SystemVerilog; sort by the `@ <n>ns`
+stamp to follow a segment across the boundary. Getting the two streams to
+interleave at all takes some care — see best practices §6.1 if you are adding a
+runner of your own.
+
 ## Files
 
 | File | Role |
@@ -83,6 +100,7 @@ across ~3000 segments each way in about 46 s wall clock.
 | `tcp_py_relay.sv` | Hands monitored segment bytes to the Python runner |
 | `tcp_test.sv` | Test library; `tcp_base_test` owns the Python bootstrap |
 | `test_runner.py` | Call API, session sequences, `TimeMux`, engines, checks |
+| [`../sim_logging.py`](../sim_logging.py) | Sim-time-stamped logging that interleaves with SV output |
 
 ## Things worth knowing before editing
 

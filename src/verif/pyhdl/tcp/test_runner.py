@@ -9,19 +9,25 @@ import asyncio
 import collections
 import heapq
 import itertools
-import logging
 import typing
 
 import hdl_if as hif
 from hdl_if.uvm import uvm_sequence_impl
 
+import sim_logging
 import tcp_item_mirror  # noqa: F401 (registers the tcp_item mirror)
 import uvm_mirror
 from tcp_model import Flags, TcpEngine, TcpSegment, TimerConfig
 from tcp_model.ports.sim_clock import SimScheduler
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
+
+def _now_ns() -> typing.Optional[int]:
+    """Simulation time for the logger, or None before SV hands us the service."""
+    ts = _State.ts
+    return None if ts is None else ts.now_ns()
+
+
+logger = sim_logging.configure(_now_ns, name="tcp")
 
 SIDE_A = 0
 SIDE_B = 1

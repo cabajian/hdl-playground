@@ -14,11 +14,12 @@ def _run_variant(variant: str, waves: bool):
     sim = run_sim(cfg)
     elapsed = time.perf_counter() - t0
 
-    combined = sim.stdout + sim.stderr
-    assert sim.returncode == 0, f"Simulation failed:\n{sim.stderr}"
-    assert "Simulation finished in SV." in sim.stdout, "Expected finish message not found"
+    # run_sim folds stderr into stdout, so this is the whole interleaved log.
+    combined = sim.stdout
+    assert sim.returncode == 0, f"Simulation failed:\n{combined[-4000:]}"
+    assert "Simulation finished in SV." in combined, "Expected finish message not found"
     assert "$error" not in combined.lower(), f"Errors found in simulation output:\n{combined}"
-    assert "[ERROR]" not in combined, f"Python-side errors in simulation output:\n{combined}"
+    assert "PY_ERROR" not in combined, f"Python-side errors in simulation output:\n{combined}"
     assert "Matched 1000/1000 packets" in combined, \
         f"Expected 1000/1000  packet match:\n{combined}"
 

@@ -156,7 +156,7 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
 - Per-direction sent-vs-delivered byte streams (exact, ordered).
 - Engine state at checkpoints (`ESTABLISHED` after T1 phase, `CLOSED` after T4).
 - `retx_depth == 0` at quiesce; retransmit count `> 0` in T5.
-- Per best-practices §6: no bare `assert` — explicit checks, logged `[ERROR]`, and a
+- Per best-practices §6: no bare `assert` — explicit checks, logged `PY_ERROR`, and a
   final `Matched …` line; `tests/test_tcp.py` greps both (same contract as ether).
 
 **SV (transport level):**

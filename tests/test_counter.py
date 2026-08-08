@@ -14,7 +14,7 @@ def test_basic(waves):
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
-    assert sim.returncode == 0, f"Simulation failed:\n{sim.stderr}"
+    assert sim.returncode == 0, f"Simulation failed:\n{sim.stdout}"
     assert "Simulation finished." in sim.stdout, "Expected finish message not found in sim output"
 
 
@@ -28,7 +28,7 @@ def test_uvm(waves):
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
-    assert sim.returncode == 0, f"Simulation failed:\n{sim.stderr}"
+    assert sim.returncode == 0, f"Simulation failed:\n{sim.stdout}"
     assert "UVM_ERROR :    0" in sim.stdout, f"UVM errors detected:\n{sim.stdout}"
     assert "UVM_FATAL :    0" in sim.stdout, f"UVM fatals detected:\n{sim.stdout}"
 
@@ -43,6 +43,6 @@ def test_pyhdl(waves):
     assert comp.returncode == 0, f"Compilation failed:\n{comp.stderr}"
 
     sim = run_sim(cfg)
-    assert sim.returncode == 0, f"Simulation failed:\n{sim.stderr}"
+    assert sim.returncode == 0, f"Simulation failed:\n{sim.stdout}"
     assert "Simulation finished in SV." in sim.stdout, "Expected finish message not found"
     assert "$error" not in sim.stdout.lower(), f"Errors found in simulation output:\n{sim.stdout}"
