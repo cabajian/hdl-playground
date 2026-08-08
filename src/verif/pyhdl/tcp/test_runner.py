@@ -11,14 +11,11 @@ import typing
 import hdl_if as hif
 from hdl_if.uvm import uvm_sequence_impl
 
+import tcp_item_mirror
 from tcp_model import Flags, TcpSegment
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-# Must match tcp_verif_pkg's TCP_TB_MSS / TCP_OPT_MAX
-TB_MSS = 256
-OPT_MAX = 40
 
 SIDE_A = 0
 SIDE_B = 1
@@ -94,8 +91,8 @@ class TcpRunnerAPI(object):
 # idiom is read-modify-write (pack, set fields, unpack). Never unpack a freshly
 # constructed snapshot -- it would zero every field you did not set.
 #
-# Lane convention: wire byte i occupies lane byte i, which is the LSB byte of
-# the packed integer, hence int.from_bytes(..., "little").
+# options/payload are byte queues; queue element width is pinned to 8 bits by
+# tcp_item_mirror.bind() rather than inferred from the data.
 # ---------------------------------------------------------------------------
 def _zero_item(v):
     v.src_port = 0
@@ -106,21 +103,13 @@ def _zero_item(v):
     v.window = 0
     v.checksum = 0
     v.urgent_ptr = 0
-    v.options_len = 0
-    v.options = 0
-    v.payload_len = 0
-    v.payload = 0
+    v.options = []
+    v.payload = []
 
 
 def _apply_segment(v, seg_bytes: bytes):
     """Fill a tcp_item snapshot from a wire-image segment."""
     hdr_len = (seg_bytes[12] >> 4) * 4
-    opts = seg_bytes[20:hdr_len]
-    payload = seg_bytes[hdr_len:]
-    if len(payload) > TB_MSS:
-        raise ValueError(f"payload {len(payload)} exceeds TB_MSS {TB_MSS}")
-    if len(opts) > OPT_MAX:
-        raise ValueError(f"options {len(opts)} exceed OPT_MAX {OPT_MAX}")
 
     _zero_item(v)
     v.src_port = int.from_bytes(seg_bytes[0:2], "big")
@@ -131,15 +120,12 @@ def _apply_segment(v, seg_bytes: bytes):
     v.window = int.from_bytes(seg_bytes[14:16], "big")
     v.checksum = int.from_bytes(seg_bytes[16:18], "big")
     v.urgent_ptr = int.from_bytes(seg_bytes[18:20], "big")
-    v.options_len = len(opts)
-    v.options = int.from_bytes(opts, "little")
-    v.payload_len = len(payload)
-    v.payload = int.from_bytes(payload, "little")
+    v.options = list(seg_bytes[20:hdr_len])
+    v.payload = list(seg_bytes[hdr_len:])
 
 
 _SNAPSHOT_FIELDS = ("src_port", "dst_port", "seq_num", "ack_num", "flags", "window",
-                    "checksum", "urgent_ptr", "options_len", "options",
-                    "payload_len", "payload")
+                    "checksum", "urgent_ptr", "options", "payload")
 
 
 def _snapshot_diff(a, b) -> typing.List[str]:
@@ -186,11 +172,30 @@ class SmokeSeq(uvm_sequence_impl):
 
             # Field transport: read-modify-write through the UVM wrapper.
             req = self.proxy.create_req()
+
+            # Pin queue element widths before any pack/unpack, so pyhdl-if
+            # never falls back to inferring them from the data.
+            applied = tcp_item_mirror.bind(req)
+            logger.info(f"Mirror bound: queue element widths {applied}")
+
             v = req.pack()
 
             fresh = {k: hex(x) for k, x in vars(v).items() if isinstance(x, int) and x}
             if fresh:
                 _err(f"field transport broken: fresh item packs non-zero: {fresh}")
+
+            # Pinning proof: an all-zero payload is the case pyhdl-if's
+            # inference gets wrong -- max(abs(x)).bit_length() would make the
+            # elements 1 bit wide. With the mirror-declared width it survives.
+            probe = req.pack()
+            _zero_item(probe)
+            probe.payload = [0] * 16
+            req.unpack(probe)
+            back = req.pack()
+            if list(back.payload) != [0] * 16:
+                _err(f"queue width not pinned: all-zero payload came back as {back.payload!r}")
+            else:
+                logger.info("Queue width pinned: 16 zero bytes survived round-trip")
 
             _apply_segment(v, _State.smoke_expected)
             req.unpack(v)
@@ -200,7 +205,7 @@ class SmokeSeq(uvm_sequence_impl):
             if diff:
                 _err(f"field transport round-trip mismatch on: {', '.join(diff)}")
             else:
-                logger.info("Field transport round-trip OK (all 12 fields)")
+                logger.info("Field transport round-trip OK (all %d fields)" % len(_SNAPSHOT_FIELDS))
 
             await self.proxy.start_item(req)
             await self.proxy.finish_item(req)

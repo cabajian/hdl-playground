@@ -23,6 +23,14 @@ class tcp_base_test extends uvm_test;
    virtual function void build_phase(uvm_phase phase);
       super.build_phase(phase);
 
+      // Queue fields only carry a 32-bit element count when the packer has
+      // metadata enabled (uvm_pack_arrayN). pyhdl-if's Python model always
+      // reads that count, so without this a queue unpacks into whatever size
+      // it already had -- i.e. empty. pack_ints()/unpack_ints() go through
+      // uvm_default_packer, so enabling it here is enough. Integral fields are
+      // unaffected: uvm_pack_intN does not consult use_metadata.
+      uvm_default_packer.use_metadata = 1;
+
       relay_a = new("relay_a");
       relay_a.side = 0;
       relay_b = new("relay_b");

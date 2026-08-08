@@ -1,44 +1,31 @@
 // tcp_item: UVM sequence item mirroring tcp_model's TcpSegment.
 //
-// The variable-length parts of a segment (options, payload) are carried in
-// fixed-width lanes with explicit length fields. Fixed widths are mandatory:
-// the pyhdl-if UVM wrapper discovers this type's field layout once by parsing
-// sprint() output and then slices pack_ints() bitstreams by those cached
-// widths, so dynamic fields cannot ride the field-transport path.
+// The variable-length parts of a segment (options, payload) are byte queues.
+// pyhdl-if's UVM wrapper supports queue fields, but it *infers* the element
+// width -- on pack from the data itself (max_val.bit_length()), which for a
+// byte queue would vary per transaction and collapse to 1 bit for an all-zero
+// payload. The element width is therefore pinned to 8 from the Python side by
+// the mirror class in tcp_item_mirror.py; see the note there.
 //
-// Lane byte convention: index i is the i-th wire byte, so options[0] /
-// payload[0] occupy the LSB byte lane. The Python side fills lanes with
-// int.from_bytes(data, "little").
-//
-// Unused lane bytes are always zero (unpack_bytes() clears the lanes first;
-// Python producers zero the snapshot before writing) so field-automation
-// compare works without masking.
+// Queue element i is wire byte i. No separate length fields: size() is the
+// length.
 class tcp_item extends uvm_sequence_item;
 
    // Protocol fields, wire order (network byte order on the wire)
-   rand bit [           15:0]      src_port;
-   rand bit [           15:0]      dst_port;
-   rand bit [           31:0]      seq_num;
-   rand bit [           31:0]      ack_num;
-   rand bit [            7:0]      flags;
-   rand bit [           15:0]      window;
-   rand bit [           15:0]      checksum;
-   rand bit [           15:0]      urgent_ptr;
+   rand bit [15:0] src_port;
+   rand bit [15:0] dst_port;
+   rand bit [31:0] seq_num;
+   rand bit [31:0] ack_num;
+   rand bit [7:0] flags;
+   rand bit [15:0] window;
+   rand bit [15:0] checksum;
+   rand bit [15:0] urgent_ptr;
 
-   // Option bytes exactly as they appear on the wire (already padded to a
-   // multiple of 4 by the Python codec); 40 B is the TCP header maximum.
-   rand bit [            7:0]      options_len;
-   rand bit [TCP_OPT_MAX-1:0][7:0] options;
-
-   // Payload lane, bounded by the TB's engine MSS (TCP_TB_MSS)
-   rand bit [           15:0]      payload_len;
-   rand bit [ TCP_TB_MSS-1:0][7:0] payload;
-
-   constraint lane_len_c {
-      options_len <= TCP_OPT_MAX;
-      options_len % 4 == 0;
-      payload_len <= TCP_TB_MSS;
-   }
+   // Option bytes exactly as they appear on the wire, already padded to a
+   // multiple of 4 by the codec. Not rand: stimulus comes from the Python
+   // engines, and Verilator's constrained randomization of queues is limited.
+   byte unsigned options[$];
+   byte unsigned payload[$];
 
    `uvm_object_utils_begin(tcp_item)
       `uvm_field_int(src_port, UVM_ALL_ON)
@@ -49,10 +36,8 @@ class tcp_item extends uvm_sequence_item;
       `uvm_field_int(window, UVM_ALL_ON)
       `uvm_field_int(checksum, UVM_ALL_ON)
       `uvm_field_int(urgent_ptr, UVM_ALL_ON)
-      `uvm_field_int(options_len, UVM_ALL_ON)
-      `uvm_field_int(options, UVM_ALL_ON)
-      `uvm_field_int(payload_len, UVM_ALL_ON)
-      `uvm_field_int(payload, UVM_ALL_ON)
+      `uvm_field_queue_int(options, UVM_ALL_ON)
+      `uvm_field_queue_int(payload, UVM_ALL_ON)
    `uvm_object_utils_end
 
    function new(string name = "tcp_item");
@@ -64,7 +49,7 @@ class tcp_item extends uvm_sequence_item;
    function tcp_byte_q_t pack_bytes();
       tcp_byte_q_t b;
       bit [3:0] off_words;
-      off_words = 4'((32'd20 + 32'(options_len)) / 4);
+      off_words = 4'((32'd20 + 32'(options.size())) / 4);
 
       b.push_back(src_port[15:8]);
       b.push_back(src_port[7:0]);
@@ -80,8 +65,8 @@ class tcp_item extends uvm_sequence_item;
       b.push_back(checksum[7:0]);
       b.push_back(urgent_ptr[15:8]);
       b.push_back(urgent_ptr[7:0]);
-      for (int i = 0; i < int'(options_len); i++) b.push_back(options[i]);
-      for (int i = 0; i < int'(payload_len); i++) b.push_back(payload[i]);
+      foreach (options[i]) b.push_back(options[i]);
+      foreach (payload[i]) b.push_back(payload[i]);
       return b;
    endfunction
 
@@ -101,15 +86,12 @@ class tcp_item extends uvm_sequence_item;
       checksum   = {b[16], b[17]};
       urgent_ptr = {b[18], b[19]};
 
-      if (hdr_len < 20 || hdr_len > b.size() || (hdr_len - 20) > TCP_OPT_MAX) return 0;
-      if ((b.size() - hdr_len) > TCP_TB_MSS) return 0;
+      if (hdr_len < 20 || hdr_len > b.size()) return 0;
 
-      options     = '0;
-      payload     = '0;
-      options_len = 8'(hdr_len - 20);
-      for (int i = 0; i < int'(options_len); i++) options[i] = b[20+i];
-      payload_len = 16'(b.size() - hdr_len);
-      for (int i = 0; i < int'(payload_len); i++) payload[i] = b[hdr_len+i];
+      options.delete();
+      payload.delete();
+      for (int i = 20; i < hdr_len; i++) options.push_back(b[i]);
+      for (int i = hdr_len; i < b.size(); i++) payload.push_back(b[i]);
       return 1;
    endfunction
 
@@ -129,8 +111,8 @@ class tcp_item extends uvm_sequence_item;
           seq_num,
           ack_num,
           window,
-          options_len,
-          payload_len
+          options.size(),
+          payload.size()
       );
    endfunction
 

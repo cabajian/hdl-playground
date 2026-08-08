@@ -8,12 +8,10 @@ package tcp_verif_pkg;
    import pyhdl_uvm::*;
    import tb_tcp_uvm_pyhdl_api_pkg::*;
 
-   // Engine MSS for this TB (TcpEngine snd_mss); bounds the item payload lane.
-   // Note: the item's total registered width must stay under UVM_MAX_STREAMBITS
-   // (4096) for pack_ints - at 256 B payload + 40 B options it is ~2.5 kbit.
+   // Engine MSS for this TB (TcpEngine snd_mss). The item's payload is a byte
+   // queue, so this no longer bounds a fixed lane -- it keeps each segment's
+   // pack image well under UVM_MAX_STREAMBITS (4096) for pack_ints.
    localparam int unsigned TCP_TB_MSS = 256;
-   // TCP header options maximum (header length field tops out at 60 bytes)
-   localparam int unsigned TCP_OPT_MAX = 40;
 
    typedef byte unsigned tcp_byte_q_t[$];
 
