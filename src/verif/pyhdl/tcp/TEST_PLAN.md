@@ -112,7 +112,7 @@ with no packaging step. Its unit tests are excluded from this repo's pytest run
 ## 4. Tests
 
 All tests share the env; selection via UVM test name / plusargs. `N` (messages per side)
-via `+num_msgs=N`, default **50**. Message sizes random in [1, 8·MSS] so segmentation,
+via `+num_msgs=N`, default **1000**. Message sizes random in [1, 8·MSS] so segmentation,
 PSH boundaries, and multi-segment reassembly are all exercised. Random seed via
 `+seed` plusarg, logged in both SV and Python for reproduction.
 
@@ -168,7 +168,7 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
 | R1 | **UVM + pyhdl-if have never been compiled into one Verilator binary in this repo** (separate cores today). Namespace or DPI clashes possible. | P0 spike before any real development; both halves individually known-good under Verilator 5.48. |
 | R2 | Async imp calls at time 0 can deadlock Verilator (best-practices §1). | `pyhdl_if_start()` + Python kick-off deferred until after reset, inside the UVM run phase; T0 exercises exactly this. |
 | R3 | Multiple concurrent activations of the `wait_ns` imp task (one per armed engine timer) may not be supported/robust. | `TimeMux` keeps exactly one outstanding SV wait; re-arms on earlier deadlines. Verified in T0/T1 where several timers overlap. |
-| R4 | Sim-time blowup from realistic TCP timers. | Scaled `TimerConfig` (§2); N default 50; runtime budget ≤ ~60 s wall per test, measured at P4. |
+| R4 | Sim-time / wall-clock blowup. N = 1000 messages per side at 1–8·MSS each means roughly tens of thousands of wire segments per run, each crossing the pyhdl-if boundary twice and serialized at 1 byte/clk. | Scaled `TimerConfig` (§2). Wall-clock measured at the P4 gate; if a T3 run exceeds ~10 min, first shrink the message-size distribution (e.g. [1, 2·MSS]) — `N` stays 1000 since the message count is the point of the demo. `+num_msgs` remains available for quick local iterations. |
 | R5 | `tcp_item` codec drift vs `segment.py`. | P1 golden-vector cross-check is a standing test (T-codec), not a one-off. |
 | R6 | TIME-WAIT keeps the sim alive past test end. | `msl = 0.5 ms`; T4 explicitly runs past 2·MSL; other tests end in `ESTABLISHED` and simply drop objections (engines `abort()`ed in cleanup). |
 | R7 | Checksum field is 0 by design (model computes no TCP checksum; needs IP pseudo-header the engine never sees). | Out of scope — SV transport is lossless; `tcp_item` carries the field verbatim. Documented here so nobody "fixes" it. |
@@ -188,8 +188,10 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
    argument per call, same as the ether TB; `tcp_item` packs/unpacks on the SV side.
 2. **All segments ride the sequencer path** (handshake and ACKs included), not just app
    data — this is the point of the demo.
-3. **N = 50 default** per side (not 1000 like ether): every app message costs multiple
-   wire segments plus timer traffic; 2×50 messages ≈ several hundred segments/run.
+3. **N = 1000 default** per side, matching the ether TB convention. Unlike ether, every
+   app message here costs multiple wire segments plus ACK/timer traffic, so a default
+   run moves tens of thousands of segments — the wall-clock contingency lives in R4,
+   and `+num_msgs` covers quick local runs.
 4. **Model vendored** under `src/verif/pyhdl/tcp_model/` rather than pip-installed, so
    the repo is self-contained and `conftest.py` needs no changes.
 5. **Core named `tb_tcp_uvm_pyhdl`** so conftest's substring triggers (`uvm`, `pyhdl`)
