@@ -69,6 +69,14 @@ class tcp_base_test extends uvm_test;
       `uvm_fatal(get_name(), "run_body() not implemented")
    endtask
 
+   // Start a Python-bodied sequence on `seqr`. Blocks until its body returns.
+   task start_py_seq(uvm_sequencer #(tcp_item) seqr, string pyclass, string name = "py_seq");
+      tcp_py_seq seq;
+      seq = tcp_py_seq::type_id::create(name);
+      seq.pyclass = pyclass;
+      seq.start(seqr);
+   endtask
+
    // Ask Python for its final verdict; any nonzero count fails the test.
    task check_python_report();
       longint n_err;
@@ -92,10 +100,7 @@ class tcp_smoke_test extends tcp_base_test;
    endfunction
 
    virtual task run_body();
-      tcp_py_seq seq;
-      seq = tcp_py_seq::type_id::create("seq");
-      seq.pyclass = "test_runner::SmokeSeq";
-      seq.start(env.agent_a.sequencer);
+      start_py_seq(env.agent_a.sequencer, "test_runner::SmokeSeq");
 
       // Let the driver/monitor drain, then collect the Python verdict
       #2000ns;
@@ -103,6 +108,44 @@ class tcp_smoke_test extends tcp_base_test;
       if (env.scoreboard.n_checked_ab != 1) begin
          `uvm_error(get_name(), $sformatf("Expected 1 A->B transport item, got %0d",
                                           env.scoreboard.n_checked_ab))
+      end
+   endtask
+endclass
+
+// P2: both directions driven concurrently with canned segments, so the
+// scoreboard's A->B and B->A streams are both exercised. Also runs the
+// time-service probe that fixes how P3 must drive simulation time.
+class tcp_transport_test extends tcp_base_test;
+   `uvm_component_utils(tcp_transport_test)
+
+   localparam int unsigned XportSegments = 4;
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+   endfunction
+
+   virtual task run_body();
+      start_py_seq(env.agent_a.sequencer, "test_runner::TimeServiceProbe", "probe");
+
+      fork
+         start_py_seq(env.agent_a.sequencer, "test_runner::XportSeqA", "seq_a");
+         start_py_seq(env.agent_b.sequencer, "test_runner::XportSeqB", "seq_b");
+      join
+
+      #5000ns;
+      check_python_report();
+
+      if (env.scoreboard.n_checked_ab != XportSegments) begin
+         `uvm_error(get_name(), $sformatf("Expected %0d A->B transport items, got %0d",
+                                          XportSegments, env.scoreboard.n_checked_ab))
+      end
+      if (env.scoreboard.n_checked_ba != XportSegments) begin
+         `uvm_error(get_name(), $sformatf("Expected %0d B->A transport items, got %0d",
+                                          XportSegments, env.scoreboard.n_checked_ba))
+      end
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
       end
    endtask
 endclass

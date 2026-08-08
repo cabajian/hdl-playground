@@ -40,6 +40,7 @@ module tb_tcp_uvm_pyhdl;
       $timeformat(-9, 0, "ns");
       uvm_config_db#(virtual tcp_if)::set(null, "uvm_test_top.env.agent_a.*", "vif", a_if);
       uvm_config_db#(virtual tcp_if)::set(null, "uvm_test_top.env.agent_b.*", "vif", b_if);
+      // Override with +UVM_TESTNAME=<test>
       run_test("tcp_smoke_test");
    end
 
