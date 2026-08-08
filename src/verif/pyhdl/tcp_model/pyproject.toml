@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tcp_model"
+version = "0.3.0"
+description = "Standalone, RFC 9293-oriented synchronous TCP engine for UVM/pyhdl-if testbenches"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["tcp_model*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tcp_model/tests"]
+addopts = "-q"

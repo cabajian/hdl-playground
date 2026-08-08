@@ -220,7 +220,47 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
 5. **Core named `tb_tcp_uvm_pyhdl`** so conftest's substring triggers (`uvm`, `pyhdl`)
    both fire.
 
-## 10. References
+## 10. P0 results (build log, not forecast)
+
+**P0 is green: T0 passes.** UVM 2020.3.1 + pyhdl-if (including its shipped UVM
+layer) + the time service + a Python-driven proxy sequence all co-exist in one
+Verilator 5.49 binary. `wait_ns(100)` advanced simulation time by exactly 100 ns
+(**R3 cleared**), one 40-byte segment crossed A→B byte-exact against
+`TcpSegment.build()`, and the scoreboard logged 1 A→B item with 0 UVM errors.
+
+Four issues had to be solved to get there; all are worked around in-tree, none
+required patching site-packages.
+
+| Finding | Resolution |
+|---|---|
+| `pyhdl_uvm_sequence_proxy #(REQ)` triggers a Verilator internal error (`V3Param: Couldn't find pin in clone list`) on its self-parameterized helper declaration. | `tcp_py_seq.sv` — the proxy and its helper hand-specialized for `REQ=tcp_item`. Python contract unchanged. |
+| `pyhdl_uvm_type_utils` builds every wrapper as `uvm_w_t impl = new(obj); super.new(impl);` — rejected (SUPERNFIRST) in 11 files. `-Wno-SUPERNFIRST` is **not** a fix: the generated C++ then references `impl` before declaring it. The macro's `ifdef VCS` variant does not parse either. | `pyhdl_uvm_vlt.sv` — re-defines just that macro with a static factory (`super.new(__vlt_mk_impl(obj))`) before including the library; the macros file's include guard makes it stick. |
+| Link failure: the DPI *export* wrappers live in `__ALL.a`, and only `libpyhdl_if.so` references them, so ld never extracts that member. (Not seen in the ether TB, whose smaller build pulls `__Dpi.o` in for other reasons.) | Four `-Wl,-u,<symbol>` link flags in the core. |
+| First byte of every segment lost: driving through a clocking block while the far side samples across the cross-wired interface races. | Driver and monitor both use plain NBA on `@(posedge clk)`. |
+
+### R8 resolved: field transport does **not** work — fallback taken
+
+P1 gate (b) **fails**, and this is the one plan-level change. Layout discovery is
+fine: `sprint()` parsing returns all 12 fields with correct widths, including
+`options` at 320 bits and `payload` at 2048 bits, so wide lanes were never the
+problem. The **value** transport is broken — `req.pack()` on a freshly created,
+all-zero item (confirmed all-`'h0` by `sprint()`) returns non-zero garbage
+(`dst_port=0xa34`, `seq_num=0x40`, `ack_num=0xf`), and `req.unpack()` raises
+`UVM/BASE/PACKER/UNPACK/N2NN`. That is a bitstream offset/metadata mismatch
+between pyhdl-if's Python packer model and UVM 2020.3.1's `pack_ints`, not a
+width effect.
+
+The documented fallback is in place and T0 passes on it: the session sequence
+hands the segment across as a `List[int]` (`TcpItemAPI.fill`) and SV populates
+the item with `tcp_item::unpack_bytes()`. **The user-facing requirement is
+unaffected** — the Python session sequence still owns the loop and still calls
+`create_req()` / `start_item()` / `finish_item()` itself through the proxy.
+
+Consequence for §3: `tcp_item`'s fixed-width lanes are no longer *required* by
+the transport, but they are kept — they bound the item, keep `pack_bytes()`
+simple, and leave the field path usable if pyhdl-if's packer is fixed upstream.
+
+## 11. References
 
 - pyhdl-if repository (Apache-2.0): https://github.com/fvutils/pyhdl-if — Call API and
   the shipped UVM layer (`share/uvm/`, `hdl_if.uvm`).

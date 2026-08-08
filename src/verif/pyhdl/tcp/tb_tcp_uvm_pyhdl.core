@@ -1,0 +1,131 @@
+CAPI=2:
+name: ::tb_tcp_uvm_pyhdl:0
+description: TCP model co-simulation testbench - UVM + PyHDL-IF (Verilator)
+
+# Required environment variables (set by conftest.py or the shell):
+#   PROJECT_ROOT        - absolute path to the repo root
+#   UVM_ROOT            - path to UVM source (default: ~/tools/uvm-1.2/src)
+#   PYHDL_IF_SHARE      - output of: pyhdl-if share
+#   PYHDL_IF_LIBS_DIR   - directory containing libpyhdl_if.so
+#   VENV_SITE_PACKAGES  - path to the active venv's site-packages
+
+filesets:
+  gen_dep:
+    depend:
+      - "::pyhdl_api_gen:0"
+  tb:
+    files:
+      - ${UVM_ROOT}/uvm_pkg.sv
+      - pyhdl_uvm_vlt.sv
+      - tcp_if.sv
+      - tcp_verif_pkg.sv
+      - tb_tcp_uvm_pyhdl.sv
+    file_type: systemVerilogSource
+
+generate:
+  api_pkg:
+    generator: pyhdl_api_gen
+    position: first
+    parameters:
+      shared_dir: ../
+      variant_dir: .
+      package: tb_tcp_uvm_pyhdl_api_pkg
+      pythonpath: "${VENV_SITE_PACKAGES}:${PROJECT_ROOT}/src/verif/pyhdl:${PROJECT_ROOT}/src/verif/pyhdl/tcp"
+      pyhdl_share: "${PYHDL_IF_SHARE}"
+
+targets:
+  sim: &sim_target
+    default_tool: verilator
+    filesets: [gen_dep, tb]
+    generate: [api_pkg]
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -j
+          - "0"
+          - +incdir+${UVM_ROOT}
+          - +incdir+${PYHDL_IF_SHARE}/dpi
+          - +incdir+${PYHDL_IF_SHARE}/uvm
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/tcp
+          - +define+UVM_NO_DPI
+          - +define+HAVE_PYHDL_IF
+          - -Wno-fatal
+          - -Wno-DECLFILENAME
+          - -Wno-IMPORTSTAR
+          - -Wno-WIDTHTRUNC
+          - -Wno-WIDTHEXPAND
+          - -Wno-UNUSEDSIGNAL
+          - -Wno-UNSIGNED
+          - -Wno-LITENDIAN
+          - -Wno-VARHIDDEN
+          - -Wno-TIMESCALEMOD
+          - -LDFLAGS
+          - -L${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -lpyhdl_if
+          - -LDFLAGS
+          - -Wl,-rpath,${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -Wl,--export-dynamic
+          # The DPI *export* wrappers land in __ALL.a, and only libpyhdl_if.so
+          # references them, so ld never extracts that archive member. Force
+          # each one to be treated as undefined so the member is pulled in.
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_invoke_hdl_f
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_invoke_hdl_t
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_response_py_t
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_pi_if_RegisterTimeCB
+    toplevel: tb_tcp_uvm_pyhdl
+
+  sim_waves:
+    <<: *sim_target
+    tools:
+      verilator:
+        mode: binary
+        exe: false
+        verilator_options:
+          - -j
+          - "0"
+          - +incdir+${UVM_ROOT}
+          - +incdir+${PYHDL_IF_SHARE}/dpi
+          - +incdir+${PYHDL_IF_SHARE}/uvm
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/tcp
+          - +define+UVM_NO_DPI
+          - +define+HAVE_PYHDL_IF
+          - -Wno-fatal
+          - -Wno-DECLFILENAME
+          - -Wno-IMPORTSTAR
+          - -Wno-WIDTHTRUNC
+          - -Wno-WIDTHEXPAND
+          - -Wno-UNUSEDSIGNAL
+          - -Wno-UNSIGNED
+          - -Wno-LITENDIAN
+          - -Wno-VARHIDDEN
+          - -Wno-TIMESCALEMOD
+          - -LDFLAGS
+          - -L${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -lpyhdl_if
+          - -LDFLAGS
+          - -Wl,-rpath,${PYHDL_IF_LIBS_DIR}
+          - -LDFLAGS
+          - -Wl,--export-dynamic
+          # The DPI *export* wrappers land in __ALL.a, and only libpyhdl_if.so
+          # references them, so ld never extracts that archive member. Force
+          # each one to be treated as undefined so the member is pulled in.
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_invoke_hdl_f
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_invoke_hdl_t
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_call_if_response_py_t
+          - -LDFLAGS
+          - -Wl,-u,pyhdl_pi_if_RegisterTimeCB
+          - --trace
+          - +define+WAVES
+    toplevel: tb_tcp_uvm_pyhdl

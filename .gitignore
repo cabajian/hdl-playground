@@ -34,3 +34,7 @@ pyvenv.cfg
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Python bytecode from vendored/verif modules
+__pycache__/
+*.pyc
