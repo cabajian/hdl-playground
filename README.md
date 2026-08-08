@@ -8,9 +8,16 @@ This repository is a vibe-coded playground for HDL-related tooling usage and dev
 - **PyHDL-IF**: Python ↔ SystemVerilog integration via DPI.
 - **Pytest**: Test orchestration for all simulation variants.
 
-## Design
+## Designs
 
-A simple 4-bit counter with register read/write capability, verified through three independent test environments that share the same test pattern.
+- **counter** — a 4-bit counter with register read/write, verified through three
+  independent environments (direct SV, UVM, PyHDL-IF) sharing one test pattern.
+- **ether** — an Ethernet frame extractor: hunts preamble/SFD in an arbitrary
+  byte stream, parses the header (including 802.1Q VLAN), streams the payload
+  out, and validates the FCS. Verified by a pure-SV testbench and a
+  scapy-driven PyHDL-IF one.
+- **TCP co-simulation** — no RTL: two Python TCP model engines exchange data
+  through a UVM SystemVerilog transport via PyHDL-IF proxy sequences.
 
 ## Getting Started
 
@@ -18,7 +25,11 @@ A simple 4-bit counter with register read/write capability, verified through thr
 
 Install the following tools on your system:
 
-- [Verilator](https://verilator.org/guide/latest/install.html) ≥ 5.x (with `--timing` support)
+- [Verilator](https://verilator.org/guide/latest/install.html) **≥ 5.4x** — 5.020
+  cannot preprocess UVM 1.2's `UVM_VERSION_STRING` macro. The `verilator` PyPI
+  wheel is a convenient source; note its bundled `verilated.mk` ships with the
+  compiler-config variables blank, so `CFG_CXXFLAGS_STD`, `CFG_CXXFLAGS_COROUTINES`
+  and `CFG_CXXFLAGS_PCH_I` need filling in.
 - [Verible](https://github.com/chipsalliance/verible) (for formatting/linting)
 - Python 3.12+
 - [UVM 1.2](https://www.accellera.org/downloads/standards/uvm) (via $UVM_HOME, otherwise the default path is: `$HOME/tools/uvm-1.2`)
@@ -61,15 +72,22 @@ git config core.hooksPath .githooks
 ### Running Tests
 
 ```bash
-# Run all tests (basic, uvm, pyhdl)
+# Run everything (counter x3, ether x2, tcp x7)
 pytest
 
-# Run a specific test
+# One design, or one variant
+pytest tests/test_ether.py
 pytest -k basic
 
-# Run with VCD waveform output
+# TCP co-simulation only (shares one compile across its tests)
+pytest tests/test_tcp.py
+
+# VCD waveform output
 pytest --waves
 ```
+
+The TCP tests select a UVM test by name and take stimulus knobs as plusargs;
+see [`src/verif/pyhdl/tcp/README.md`](src/verif/pyhdl/tcp/README.md).
 
 ### Utilities
 
@@ -89,20 +107,36 @@ make clean
 ```
 src/
 ├── rtl/
-│   └── counter.sv              # 4-bit counter DUT
+│   ├── counter.sv               # 4-bit counter DUT
+│   └── ether.sv                 # Ethernet frame extractor (MAC RX)
 └── verif/
-    ├── basic/
-    │   └── tb_counter.sv        # Direct-test testbench
-    ├── uvm/
-    │   ├── tb_counter_uvm.sv    # UVM top module
-    │   ├── counter_test.sv      # UVM test
-    │   └── ...                  # UVM env, agent, sequences, scoreboard
+    ├── basic/                   # Direct-test SV testbenches
+    │   ├── tb_counter.sv
+    │   └── tb_ether_basic.sv
+    ├── uvm/                     # UVM env/agent/sequences/scoreboard
+    │   └── tb_counter_uvm.sv
     └── pyhdl/
-        ├── tb_counter_pyhdl.sv  # PyHDL-IF testbench
-        ├── counter_test_pkg.sv  # SV test class
-        ├── simple_print.py      # Python test driver
-        └── best_practices.md    # PyHDL-IF lessons learned
+        ├── best_practices.md    # PyHDL-IF practices, pitfalls, debugging
+        ├── sim_clock.py         # simpy-backed clock shared by TBs
+        ├── uvm_mirror.py        # declare queue element widths via a mirror class
+        ├── counter/             # PyHDL-IF counter TB
+        ├── ether/               # PyHDL-IF ether TB (scapy stimulus)
+        ├── tcp/                 # TCP co-simulation TB (UVM + PyHDL-IF)
+        └── tcp_model/           # vendored Python TCP model
 tests/
-├── conftest.py                  # Pytest fixtures (compile, sim, --waves)
-└── test_counter.py              # Test functions for all 3 variants
+├── conftest.py                  # Pytest fixtures (compile, sim, plusargs, --waves)
+├── test_counter.py
+├── test_ether.py
+└── test_tcp.py
 ```
+
+## Further reading
+
+- [`src/verif/pyhdl/best_practices.md`](src/verif/pyhdl/best_practices.md) —
+  building and debugging PyHDL-IF testbenches: the concurrency rule, Verilator
+  and UVM integration gotchas, and a symptom index. **Start here** if you are
+  writing a new PyHDL-IF testbench or debugging one.
+- [`src/verif/pyhdl/tcp/README.md`](src/verif/pyhdl/tcp/README.md) — the TCP
+  co-simulation testbench.
+- [`src/verif/pyhdl/tcp/TEST_PLAN.md`](src/verif/pyhdl/tcp/TEST_PLAN.md) — its
+  test plan, results and risk log.

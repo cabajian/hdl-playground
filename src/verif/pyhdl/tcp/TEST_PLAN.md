@@ -1,6 +1,11 @@
 # TCP Model Co-Simulation Testbench — Test Plan
 
-**Testbench:** `tb_tcp_uvm_pyhdl` &nbsp;·&nbsp; **Status:** draft for review &nbsp;·&nbsp; **Location:** `src/verif/pyhdl/tcp/`
+**Testbench:** `tb_tcp_uvm_pyhdl` &nbsp;·&nbsp; **Status:** implemented — all phases green &nbsp;·&nbsp; **Location:** `src/verif/pyhdl/tcp/`
+
+> Sections 1–9 are the plan as approved. Sections 10–12 record what actually
+> happened, including the two places the plan was wrong (R3 was broader than
+> expected; R8 turned out to be UVM-version-specific). Where they disagree,
+> the results sections are authoritative.
 
 ## 1. Purpose
 
@@ -47,7 +52,7 @@ This is *model-in-the-loop* verification. There is no RTL DUT: the things under 
   `tcp_if` instance. The TB top cross-wires them: A's TX signals are B's RX signals and
   vice versa. One common clock.
 - **Segment path (A→B):** engine A emits segment bytes via its `tx()` callback → the
-  bytes land on an `asyncio.Queue` inside **session sequence A** — a Python class
+  bytes land on a `collections.deque` inside **session sequence A** — a Python class
   extending pyhdl-if's `uvm_sequence_impl`, running as the body of the shipped
   **`pyhdl_uvm_sequence_proxy #(tcp_item)`** started on sequencer A. The sequence body
   pops the queue, `create_req()`s a `tcp_item`, fills its fields from
@@ -60,7 +65,8 @@ This is *model-in-the-loop* verification. There is no RTL DUT: the things under 
 - The proxy is a **real `uvm_sequence`**: factory-created, subject to sequencer
   arbitration, blocking `start()` semantics — no hand-rolled SV mailbox machinery. All
   segment queueing lives Python-side in the session sequence, where it is a plain
-  `asyncio.Queue`.
+  `deque` plus an `asyncio.Event`. *(As built, the proxy is hand-specialized for
+  `REQ=tcp_item` — see §11 — but the Python contract is exactly this.)*
 - **Every** segment takes this path — SYNs, ACKs, data, FINs, retransmissions. The
   engines never talk directly; the SV wire is the only channel.
 - Both engines live in one Python interpreter on one asyncio loop (same as the model's
@@ -93,11 +99,10 @@ data + teardown runs in the low milliseconds of sim time.
 
 ### MSS scaling
 
-The engines run with `snd_mss = TB_MSS = 256` (a `TcpEngine` constructor parameter,
-default 1460). This bounds `tcp_item`'s fixed payload lane at 256 B (2048 bits), keeping
-the wrapper's per-type `sprint()` layout discovery and per-item `pack_ints()` images at
-a size the mechanism can plausibly sustain (risk R8) — while message sizes of [1, 8·MSS]
-still exercise segmentation exactly as before, just with more, smaller segments.
+The engines run with `snd_mss = 256` (a `TcpEngine` constructor parameter, default
+1460), which keeps each segment's `pack_ints()` image well under
+`UVM_MAX_STREAMBITS` and each run's wall clock reasonable, while message sizes up
+to `+max_msg` still exercise segmentation — just with more, smaller segments.
 
 ## 3. New SV/Python components
 
@@ -105,12 +110,12 @@ All SV in `src/verif/pyhdl/tcp/`, package `tcp_verif_pkg`, prefix `tcp_`.
 
 | Component | Kind | Notes |
 |---|---|---|
-| `tcp_item` | `uvm_sequence_item` | Fields mirror `TcpSegment`: `src_port`, `dst_port`, `seq`, `ack`, `flags[7:0]`, `window`, `urgent_ptr` — plus **fixed-width lanes** for the variable parts: `bit [TB_MSS-1:0][7:0] payload` with `payload_len`, and `bit [39:0][7:0] options` with `options_len` (40 B is the TCP header maximum). Fixed widths are mandatory: the pyhdl-if UVM wrapper discovers field layout once per *type* by parsing `sprint()` output and slices the `pack_ints()` bitstream by those cached widths, so dynamic fields (`payload[$]`) cannot ride the field-transport path. All protocol fields registered with `uvm_field` macros with identical print/pack flag sets (the layout invariant is print order == pack order). The item is **constraint-free** (stimulus lives in sequences); `pack_bytes()`/`unpack_bytes()` implement the `segment.py` `build()`/`parse()` wire codec for the driver/monitor (20 B header, network order, no checksum — §7). `convert2string()` prints `flag_str`-style (`"S.A"`, `"PA"`…). |
+| `tcp_item` | `uvm_sequence_item` | Fields mirror `TcpSegment`: `src_port`, `dst_port`, `seq`, `ack`, `flags[7:0]`, `window`, `checksum`, `urgent_ptr`, plus **byte queues** `options[$]` and `payload[$]` (`uvm_field_queue_int`; `size()` is the length, no separate `*_len` fields). Queue support needs two things pyhdl-if will not give you by default: `uvm_default_packer.use_metadata = 1` so UVM emits the 32-bit element count, and an explicit **element width** — declared as 8 bits in `tcp_item_mirror.py` and applied by `uvm_mirror.bind()`, because pyhdl-if otherwise infers it from the data. All protocol fields registered with identical print/pack flag sets (the layout invariant is print order == pack order). The item is **constraint-free** (stimulus lives in sequences); `pack_bytes()`/`unpack_bytes()` implement the `segment.py` `build()`/`parse()` wire codec for the driver/monitor (20 B header, network order, no checksum — §7). *(The plan originally specified fixed-width lanes; queues became viable once the width could be pinned — see §12.)* |
 | `tcp_if` | interface | Per direction: `valid`, `data[7:0]`, `last`. Clocking block + `tb`/`dut` modports per repo best practices. |
 | `tcp_driver` | `uvm_driver #(tcp_item)` | Serializes `item.pack_bytes()` onto the TX side, one byte/clk, `last` high on final byte. Optional inter-segment gap knob. |
 | `tcp_monitor` | `uvm_monitor` | Reassembles RX bytes until `last`, `unpack_bytes()` → analysis port; also forwards raw bytes to the Python bridge (handle via `uvm_config_db`). |
 | `tcp_sequencer` | typedef `uvm_sequencer #(tcp_item)` | |
-| session sequences | `pyhdl_uvm_sequence_proxy #(tcp_item)` | **Shipped by pyhdl-if** — not written here. One proxy per side, `pyclass` pointing at the Python session sequence class (`TcpSessionA`/`TcpSessionB` extending `uvm_sequence_impl`), which owns the engine's tx queue and calls `create_req`/`start_item`/`finish_item` directly. |
+| session sequences | `tcp_py_seq` (specialized `pyhdl_uvm_sequence_proxy`) | One proxy per side, `pyclass` naming the Python session sequence (extending `uvm_sequence_impl`), which owns the engine's tx queue and calls `create_req`/`start_item`/`finish_item` directly. The shipped generic proxy does not elaborate under Verilator, so it is hand-specialized for `REQ=tcp_item` in `tcp_py_seq.sv`; the Python side is unchanged (§11). |
 | `tcp_agent` | `uvm_agent` | Driver + sequencer + monitor, `side` config ("a"/"b"). |
 | `tcp_scoreboard` | `uvm_component` | Transport check: every item driven on side X appears byte-exact at side Y's monitor, in order (two FIFO compare streams). App-level data checking lives in Python (§5). |
 | `tcp_env` | `uvm_env` | Two agents + scoreboard. |
@@ -304,7 +309,48 @@ reactive, waking on an `asyncio.Event` its engine's `tx()` sets. A segment
 queued by an engine's `tx()` is driven by that side's sequence, and the far
 monitor relays it back into the peer's `on_segment()`.
 
-## 12. References
+## 12. P4 / P5 results
+
+**P4 green.** `tcp_data_test` (T2) and `tcp_bidir_test` (T3) carry application
+data over the established connection. At the planned **N = 1000** per direction,
+T3 delivers 1000/1000 messages each way — ~250 kB A→B and ~262 kB B→A across
+~3000 segments per direction — with zero errors, in **46 s wall clock** and
+26.5 ms of simulation time. R4's contingency is not needed: the message-size
+distribution stays as planned.
+
+`tests/test_tcp.py` runs all five UVM tests from one compiled binary (a
+module-scoped fixture compiles once; each test selects its UVM test by name).
+`conftest.run_sim()` gained an optional `plusargs` argument to make that
+possible — an additive change the counter/ether tests do not notice.
+
+Both engines live in one interpreter, so side A's sequence makes the *app*
+calls for both peers (`a.send(...)` / `b.send(...)`). Only the resulting
+segments are protocol traffic, and every one still crosses the wire from its
+own side's sequencer.
+
+### The concurrency rule, in full
+
+R3 turned out to be broader than "several `wait_ns` at once". Once engines run,
+side B wakes to drive an ACK while side A is asleep pumping time, so a
+`start_item`/`finish_item` overlaps a `wait_ns` — and that wedges Verilator the
+same way (`DIDNOTCONVERGE`). The rule is therefore:
+
+> **At most one pyhdl-if imp task may be in flight at a time.**
+
+Every SV-blocking call takes a single module-level `asyncio.Lock`, and side A
+pumps in short quanta (20 µs) so side B is never starved behind it. Note this is
+*not* contradicted by P2, where two sequences drove concurrently: those runs had
+no `wait_ns` outstanding.
+
+**P5 green.** `tcp_teardown_test` (T4) sends a little data, then closes both
+sides and confirms both reach `CLOSED` — one of them through TIME-WAIT expiry at
+the scaled 2·MSL. `tcp_loss_test` (T5) drops whole data-bearing A→B segments at
+fixed indices (deterministic, not probabilistic), and checks that RTO
+retransmission still delivers every byte in order. Dropped segments never reach
+the wire, so the scoreboard still compares byte-for-byte on everything that
+*was* driven — the data check is Python's.
+
+## 13. References
 
 - pyhdl-if repository (Apache-2.0): https://github.com/fvutils/pyhdl-if — Call API and
   the shipped UVM layer (`share/uvm/`, `hdl_if.uvm`).

@@ -16,6 +16,11 @@ class tcp_base_test extends uvm_test;
    // Sim-time watchdog: a stalled Python side otherwise hangs the run
    longint unsigned watchdog_ns = 500_000_000;
 
+   // Stimulus knobs, overridable from the command line
+   int unsigned num_msgs = 1000;
+   int unsigned seed = 1;
+   int unsigned max_msg = 512;
+
    function new(string name, uvm_component parent);
       super.new(name, parent);
    endfunction
@@ -59,6 +64,11 @@ class tcp_base_test extends uvm_test;
       relay_a.runner = py_runner;
       relay_b.runner = py_runner;
       py_runner.init_ts(ts.api.m_obj);
+
+      void'($value$plusargs("num_msgs=%d", num_msgs));
+      void'($value$plusargs("seed=%d", seed));
+      void'($value$plusargs("max_msg=%d", max_msg));
+      py_runner.configure(longint'(num_msgs), longint'(seed), longint'(max_msg));
 
       run_body();
 
@@ -184,6 +194,93 @@ class tcp_handshake_test extends tcp_base_test;
                                           env.scoreboard.n_errors))
       end
       `uvm_info(get_name(), $sformatf("handshake segments: %0d A->B, %0d B->A",
+                                      env.scoreboard.n_checked_ab, env.scoreboard.n_checked_ba),
+                UVM_LOW)
+   endtask
+endclass
+
+// T2/T3 (P4): application data across the established connection. Side A's
+// sequence orchestrates both peers' app-level send() calls and pumps time;
+// every resulting segment still crosses the wire from its own side's
+// sequencer. Message count via +num_msgs, RNG via +seed, size cap via
+// +max_msg.
+class tcp_data_test extends tcp_base_test;
+   `uvm_component_utils(tcp_data_test)
+
+   // Python class implementing side A's session; overridden by the bidir test
+   string seq_a_pyclass = "test_runner::DataSeqA";
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+   endfunction
+
+   virtual task run_body();
+      fork
+         start_py_seq(env.agent_a.sequencer, seq_a_pyclass, "seq_a");
+         start_py_seq(env.agent_b.sequencer, "test_runner::EngineSeqB", "seq_b");
+      join
+
+      #2000ns;
+      check_python_report();
+
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
+      end
+      `uvm_info(get_name(), $sformatf("segments on the wire: %0d A->B, %0d B->A",
+                                      env.scoreboard.n_checked_ab, env.scoreboard.n_checked_ba),
+                UVM_LOW)
+   endtask
+endclass
+
+class tcp_bidir_test extends tcp_data_test;
+   `uvm_component_utils(tcp_bidir_test)
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+      seq_a_pyclass = "test_runner::BidirSeqA";
+   endfunction
+endclass
+
+// T4 (P5): graceful teardown. Some data, then both sides close; the
+// connection must reach CLOSED, one side through TIME-WAIT expiry.
+class tcp_teardown_test extends tcp_data_test;
+   `uvm_component_utils(tcp_teardown_test)
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+      seq_a_pyclass = "test_runner::TeardownSeqA";
+   endfunction
+endclass
+
+// T5 (P5): segment loss. Side A's sequence drops whole data-bearing segments
+// at fixed indices, so retransmission has to recover them. Those segments
+// never reach the wire, so the A->B scoreboard stream is expected to be
+// short by exactly the number dropped -- Python owns the data check here.
+class tcp_loss_test extends tcp_data_test;
+   `uvm_component_utils(tcp_loss_test)
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+      seq_a_pyclass = "test_runner::LossSeqA";
+   endfunction
+
+   virtual task run_body();
+      fork
+         start_py_seq(env.agent_a.sequencer, seq_a_pyclass, "seq_a");
+         start_py_seq(env.agent_b.sequencer, "test_runner::EngineSeqB", "seq_b");
+      join
+
+      #2000ns;
+      check_python_report();
+
+      // Dropped segments are never driven, so driver and far monitor still
+      // agree byte-for-byte on everything that *was* driven.
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
+      end
+      `uvm_info(get_name(), $sformatf("segments on the wire: %0d A->B, %0d B->A",
                                       env.scoreboard.n_checked_ab, env.scoreboard.n_checked_ba),
                 UVM_LOW)
    endtask

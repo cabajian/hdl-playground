@@ -57,19 +57,50 @@ class _State:
     txq: typing.Dict[int, typing.Any] = {}
     tx_event: typing.Dict[int, typing.Any] = {}
     app_rx: typing.Dict[int, bytearray] = {}
+    app_tx: typing.Dict[int, bytearray] = {}
     done: typing.Any = None
+
+    # T5 loss injection bookkeeping
+    seg_idx: typing.Dict[int, int] = {}
+    dropped: typing.List[int] = []
+
+    # Stimulus configuration, set from SV plusargs via TcpRunnerAPI.configure
+    num_msgs: int = 8
+    seed: int = 1
+    max_msg: int = 512
 
     @staticmethod
     def init_engine_state():
         _State.txq = {SIDE_A: collections.deque(), SIDE_B: collections.deque()}
         _State.tx_event = {SIDE_A: asyncio.Event(), SIDE_B: asyncio.Event()}
         _State.app_rx = {SIDE_A: bytearray(), SIDE_B: bytearray()}
+        _State.app_tx = {SIDE_A: bytearray(), SIDE_B: bytearray()}
         _State.done = asyncio.Event()
 
 
 def _err(msg: str):
     _State.errors += 1
     logger.error(msg)
+
+
+# ---------------------------------------------------------------------------
+# Only one pyhdl-if imp task may be in flight at a time.
+#
+# Several concurrent activations wedge Verilator's inactive region
+# (DIDNOTCONVERGE). That covers wait_ns against itself, and also a sequence's
+# start_item/finish_item overlapping another side's wait_ns -- which is exactly
+# what happens once engines are running, since side B wakes to drive an ACK
+# while side A is asleep pumping time. Every SV-blocking call therefore takes
+# this lock. Side A pumps in short quanta so side B is never starved.
+# ---------------------------------------------------------------------------
+_sv_lock: typing.Optional[typing.Any] = None
+
+
+def sv_lock():
+    global _sv_lock
+    if _sv_lock is None:
+        _sv_lock = asyncio.Lock()
+    return _sv_lock
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +112,14 @@ class TcpRunnerAPI(object):
     def init_ts(self, ts: TimeServiceAPI):
         _State.ts = ts
         logger.info("Runner initialized with time service")
+
+    @hif.exp
+    def configure(self, num_msgs: int, seed: int, max_msg: int):
+        _State.num_msgs = int(num_msgs)
+        _State.seed = int(seed)
+        _State.max_msg = int(max_msg)
+        logger.info(f"config: num_msgs={_State.num_msgs} seed={_State.seed} "
+                    f"max_msg={_State.max_msg}")
 
     @hif.exp
     def rx_segment(self, side: int, data: typing.List):
@@ -180,13 +219,14 @@ class _SessionBase(uvm_sequence_impl):
 
     async def send_segment(self, seg_bytes: bytes):
         """Drive one wire-image segment out of this side's sequencer."""
-        req = self._new_req()
-        v = req.pack()
-        _apply_segment(v, seg_bytes)
-        req.unpack(v)
-        _State.sent[self.SIDE].append(seg_bytes)
-        await self.proxy.start_item(req)
-        await self.proxy.finish_item(req)
+        async with sv_lock():
+            req = self._new_req()
+            v = req.pack()
+            _apply_segment(v, seg_bytes)
+            req.unpack(v)
+            _State.sent[self.SIDE].append(seg_bytes)
+            await self.proxy.start_item(req)
+            await self.proxy.finish_item(req)
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +443,8 @@ class TimeMux:
 
         delta = target - self.now_ns()
         if delta > 0:
-            await self._ts.wait_ns(delta)
+            async with sv_lock():
+                await self._ts.wait_ns(delta)
 
         self._fire_due()
         await self._settle()
@@ -504,5 +545,246 @@ class HandshakeSeqA(_EngineSeq):
             _State.tx_event[SIDE_B].set()  # release side B
         except Exception as e:
             _err(f"HandshakeSeqA raised: {type(e).__name__}: {e}")
+            _State.done.set()
+            _State.tx_event[SIDE_B].set()
+
+
+# ---------------------------------------------------------------------------
+# T2 / T3: application data over the established connection.
+#
+# Both engines live in this interpreter, so side A's sequence drives the *app*
+# calls for both peers (a.send(...) / b.send(...)). Only the resulting segments
+# are protocol traffic, and every one of those still crosses the SV wire: B's
+# engine queues them and EngineSeqB drives them from side B's sequencer.
+# ---------------------------------------------------------------------------
+def _rand_msg(rng, n_max: int) -> bytes:
+    return bytes(rng.getrandbits(8) for _ in range(rng.randint(1, n_max)))
+
+
+class _DataSeqA(_EngineSeq):
+
+    SIDE = SIDE_A
+    BIDIR = False
+
+    async def run_until(self, cond, timeout_ns: int, quantum_ns: int = 20_000) -> bool:
+        """Drain and advance time until `cond()` holds or the budget runs out."""
+        deadline = _State.ts.now_ns() + timeout_ns
+        while _State.ts.now_ns() < deadline:
+            await self.drain()
+            if cond():
+                return True
+            await _State.mux.step(quantum_ns)
+        await self.drain()
+        return cond()
+
+    async def body(self):
+        import random
+        try:
+            a, b = build_engines()
+            rng = random.Random(_State.seed)
+
+            b.passive_open()
+            a.active_open()
+            ok = await self.run_until(
+                lambda: a.state.name == "ESTABLISHED" and b.state.name == "ESTABLISHED",
+                20_000_000)
+            if not ok:
+                _err(f"handshake failed: A={a.state.name} B={b.state.name}")
+                return
+            logger.info(f"connected at {_State.ts.now_ns()} ns; "
+                        f"sending {_State.num_msgs} message(s) per direction"
+                        if self.BIDIR else
+                        f"connected at {_State.ts.now_ns()} ns; "
+                        f"sending {_State.num_msgs} message(s) A->B")
+
+            for i in range(_State.num_msgs):
+                msg = _rand_msg(rng, _State.max_msg)
+                _State.app_tx[SIDE_A] += msg
+                a.send(msg)
+                if self.BIDIR:
+                    msg_b = _rand_msg(rng, _State.max_msg)
+                    _State.app_tx[SIDE_B] += msg_b
+                    b.send(msg_b)
+
+                # Let this message reach the peer and be acknowledged before
+                # queueing the next, so the run stays bounded and in step.
+                want_b = len(_State.app_tx[SIDE_A])
+                want_a = len(_State.app_tx[SIDE_B])
+                done = await self.run_until(
+                    lambda: (len(_State.app_rx[SIDE_B]) >= want_b
+                             and len(_State.app_rx[SIDE_A]) >= want_a
+                             and a.get_tcb_snapshot()["retx_depth"] == 0
+                             and b.get_tcb_snapshot()["retx_depth"] == 0),
+                    5_000_000)
+                if not done:
+                    _err(f"message {i} did not complete: "
+                         f"A->B {len(_State.app_rx[SIDE_B])}/{want_b} "
+                         f"B->A {len(_State.app_rx[SIDE_A])}/{want_a}")
+                    break
+                if _State.num_msgs <= 20 or (i + 1) % 100 == 0:
+                    logger.info(f"  {i + 1}/{_State.num_msgs} messages complete "
+                                f"at {_State.ts.now_ns()} ns")
+
+            self._check_streams(a, b)
+        except Exception as e:
+            _err(f"{type(self).__name__} raised: {type(e).__name__}: {e}")
+        finally:
+            _State.done.set()
+            _State.tx_event[SIDE_B].set()
+
+    def _check_streams(self, a, b):
+        for src, dst in ((SIDE_A, SIDE_B),) + (((SIDE_B, SIDE_A),) if self.BIDIR else ()):
+            tag = f"{'AB'[src]}->{'AB'[dst]}"
+            sent, got = bytes(_State.app_tx[src]), bytes(_State.app_rx[dst])
+            if sent != got:
+                _err(f"{tag} app data mismatch: {len(sent)} sent vs {len(got)} delivered")
+                for i, (x, y) in enumerate(zip(sent, got)):
+                    if x != y:
+                        _err(f"{tag} first differing byte at offset {i}: {x:#04x} vs {y:#04x}")
+                        break
+            else:
+                logger.info(f"Matched {_State.num_msgs}/{_State.num_msgs} messages {tag} "
+                            f"({len(sent)} bytes)")
+        for eng, side in ((a, SIDE_A), (b, SIDE_B)):
+            if eng.state.name != "ESTABLISHED":
+                _err(f"side {side} left ESTABLISHED: {eng.state.name}")
+            depth = eng.get_tcb_snapshot()["retx_depth"]
+            if depth:
+                _err(f"side {side} has {depth} unacknowledged segment(s) at end")
+
+
+class DataSeqA(_DataSeqA):
+    """T2: unidirectional, A -> B."""
+    BIDIR = False
+
+
+class BidirSeqA(_DataSeqA):
+    """T3: both directions, interleaved."""
+    BIDIR = True
+
+
+# ---------------------------------------------------------------------------
+# T4: graceful teardown. Both sides close; the connection must reach CLOSED,
+# one side via TIME-WAIT expiry (2*MSL, scaled to 0.5 ms here).
+# ---------------------------------------------------------------------------
+class TeardownSeqA(_DataSeqA):
+
+    BIDIR = True
+
+    async def body(self):
+        import random
+        try:
+            a, b = build_engines()
+            rng = random.Random(_State.seed)
+
+            b.passive_open()
+            a.active_open()
+            if not await self.run_until(
+                    lambda: a.state.name == "ESTABLISHED" and b.state.name == "ESTABLISHED",
+                    20_000_000):
+                _err(f"handshake failed: A={a.state.name} B={b.state.name}")
+                return
+
+            # A little traffic first, so the teardown follows real data
+            n = min(_State.num_msgs, 5)
+            for _ in range(n):
+                msg = _rand_msg(rng, _State.max_msg)
+                _State.app_tx[SIDE_A] += msg
+                a.send(msg)
+                want = len(_State.app_tx[SIDE_A])
+                await self.run_until(lambda: len(_State.app_rx[SIDE_B]) >= want, 5_000_000)
+            logger.info(f"{n} message(s) delivered; closing")
+
+            a.close()
+            await self.run_until(lambda: b.state.name == "CLOSE_WAIT", 5_000_000)
+            b.close()
+
+            ok = await self.run_until(
+                lambda: a.state.name == "CLOSED" and b.state.name == "CLOSED", 20_000_000)
+            logger.info(f"after close: A={a.state.name} B={b.state.name} "
+                        f"at {_State.ts.now_ns()} ns")
+            if not ok:
+                _err(f"teardown incomplete: A={a.state.name} B={b.state.name}")
+            else:
+                logger.info("Teardown OK: both CLOSED")
+
+            if bytes(_State.app_tx[SIDE_A]) != bytes(_State.app_rx[SIDE_B]):
+                _err("data delivered before close does not match")
+            else:
+                logger.info(f"Matched {n}/{n} messages A->B before teardown")
+        except Exception as e:
+            _err(f"TeardownSeqA raised: {type(e).__name__}: {e}")
+        finally:
+            _State.done.set()
+            _State.tx_event[SIDE_B].set()
+
+
+# ---------------------------------------------------------------------------
+# T5: segment loss. The driver drops whole A->B segments at fixed indices, so
+# the run stays deterministic; retransmission must still deliver every byte in
+# order. Drops are counted here rather than in the scoreboard, which is why the
+# SV test relaxes its A->B stream compare.
+# ---------------------------------------------------------------------------
+DROP_INDICES = frozenset({2, 5})
+
+
+class LossSeqA(_DataSeqA):
+
+    BIDIR = False
+
+    async def send_segment(self, seg_bytes: bytes):
+        idx = _State.seg_idx[self.SIDE]
+        _State.seg_idx[self.SIDE] += 1
+        if idx in DROP_INDICES and len(seg_bytes) > 20:
+            # Drop a data-bearing segment: account for it, put nothing on the wire
+            _State.dropped.append(idx)
+            logger.info(f"  dropping A->B segment {idx} ({len(seg_bytes)} B)")
+            return
+        await super().send_segment(seg_bytes)
+
+    async def body(self):
+        import random
+        try:
+            a, b = build_engines()
+            _State.seg_idx = {SIDE_A: 0, SIDE_B: 0}
+            _State.dropped = []
+            rng = random.Random(_State.seed)
+
+            b.passive_open()
+            a.active_open()
+            if not await self.run_until(
+                    lambda: a.state.name == "ESTABLISHED" and b.state.name == "ESTABLISHED",
+                    20_000_000):
+                _err(f"handshake failed: A={a.state.name} B={b.state.name}")
+                return
+
+            n = min(_State.num_msgs, 8)
+            for i in range(n):
+                msg = _rand_msg(rng, _State.max_msg)
+                _State.app_tx[SIDE_A] += msg
+                a.send(msg)
+                want = len(_State.app_tx[SIDE_A])
+                if not await self.run_until(
+                        lambda: (len(_State.app_rx[SIDE_B]) >= want
+                                 and a.get_tcb_snapshot()["retx_depth"] == 0),
+                        30_000_000):
+                    _err(f"message {i} never recovered "
+                         f"({len(_State.app_rx[SIDE_B])}/{want} bytes)")
+                    break
+
+            if not _State.dropped:
+                _err("loss test dropped nothing -- not exercising retransmission")
+            else:
+                logger.info(f"Dropped A->B segments {_State.dropped}")
+
+            sent, got = bytes(_State.app_tx[SIDE_A]), bytes(_State.app_rx[SIDE_B])
+            if sent != got:
+                _err(f"loss recovery failed: {len(sent)} sent vs {len(got)} delivered")
+            else:
+                logger.info(f"Matched {n}/{n} messages A->B after "
+                            f"{len(_State.dropped)} dropped segment(s) ({len(sent)} bytes)")
+        except Exception as e:
+            _err(f"LossSeqA raised: {type(e).__name__}: {e}")
+        finally:
             _State.done.set()
             _State.tx_event[SIDE_B].set()

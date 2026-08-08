@@ -188,8 +188,11 @@ def compile_sim(core_name: str, *, waves: bool = False) -> tuple[dict, subproces
     return cfg, result
 
 
-def run_sim(cfg: dict) -> subprocess.CompletedProcess:
-    """Run the compiled simulation binary. Returns the subprocess result."""
+def run_sim(cfg: dict, plusargs: list[str] | None = None) -> subprocess.CompletedProcess:
+    """Run the compiled simulation binary. Returns the subprocess result.
+
+    `plusargs` are appended verbatim (e.g. ["+UVM_TESTNAME=foo", "+num_msgs=8"]).
+    """
     build_dir: Path = cfg["build_dir"]
     exe = build_dir / f"V{cfg['top']}"
 
@@ -199,6 +202,7 @@ def run_sim(cfg: dict) -> subprocess.CompletedProcess:
     args = [str(exe)]
     if cfg.get("waves"):
         args.append(f"+waves_vcd={build_dir / 'waves.vcd'}")
+    args.extend(plusargs or [])
 
     result = subprocess.run(
         args, capture_output=True, text=True, env=env, cwd=str(PROJECT_ROOT)
