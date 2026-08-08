@@ -51,23 +51,30 @@ cd hdl-playground
 direnv allow
 ```
 
-#### Option 2: Manual Setup
+#### Option 2: Setup script
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/cabajian/hdl-playground.git
 cd hdl-playground
-
-# 2. Create and activate a Python virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Install Python dependencies
-pip install -r requirements.txt
-
-# 4. Enable the pre-commit formatting hook
-git config core.hooksPath .githooks
+./scripts/setup_env.sh
 ```
+
+This creates the venv, installs the pinned toolchain, patches the Verilator
+wheel (see below), fetches UVM 1.2, and configures the git hooks. It is
+idempotent — re-run it any time, and **always re-run it after `pip install`**,
+which silently reverts the Verilator patch.
+
+```bash
+./scripts/setup_env.sh --check   # verify an existing setup, change nothing
+```
+
+Then export the tool paths it prints (or use direnv, which does it for you).
+
+> **Why the Verilator patch?** The `verilator` PyPI wheel ships `verilated.mk`
+> with its compiler-configuration variables empty — they are normally filled in
+> by Verilator's `./configure`. Without them the C++ stage fails with confusing
+> errors about `std::coroutine_handle` or a missing `__pch.h.fast`. The script
+> fills them in idempotently.
 
 ### Running Tests
 

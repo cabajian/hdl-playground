@@ -452,7 +452,28 @@ Five TCP tests share one compile: 3m34s total instead of ~20 minutes.
 - Keep timescales consistent. The time service assumes `1ns` units so `$time`
   and `#delay` are nanoseconds.
 
-## 9. Reference implementations in this repo
+## 9. Upstream issues worth reporting
+
+Three of the workarounds above exist because of bugs in dependencies, not in
+this repo. They are worked around in-tree, which means **they will drift if the
+dependency is upgraded** — re-check each on a version bump. None has been filed
+upstream yet.
+
+| # | Project | Issue | Worked around in |
+|---|---|---|---|
+| 1 | pyhdl-if | `pyhdl_uvm_sequence_proxy #(REQ)`'s self-parameterized helper does not elaborate under Verilator (`V3Param: Couldn't find pin in clone list`) | `tcp/tcp_py_seq.sv` (§4.1) |
+| 2 | pyhdl-if | `pyhdl_uvm_type_utils` emits `T impl = new(obj); super.new(impl);`, which Verilator rejects; the `` `ifdef VCS `` alternative does not parse either | `tcp/pyhdl_uvm_vlt.sv` (§4.2) |
+| 3 | pyhdl-if | Python packer model tracks UVM 1.2's `pack_ints`; misaligned against 1800.2-2020 | asserted, not worked around (§4.4) |
+
+A fourth is arguably a Verilator packaging issue rather than a bug: the
+`verilator` PyPI wheel ships `verilated.mk` with its compiler-configuration
+variables empty. `scripts/setup_env.sh` repairs it.
+
+Queue element-width inference (§5.3) is a *design* choice upstream rather than a
+bug, but it is worth raising: inferring a width from data means the same field
+serializes differently from one transaction to the next.
+
+## 10. Reference implementations in this repo
 
 | Want to see… | Look at |
 |---|---|

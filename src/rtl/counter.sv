@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 module counter #(
-    parameter COUNT_WIDTH = 4
+    parameter int COUNT_WIDTH = 4
 ) (
     input  logic                   clk,
     input  logic                   rst_n,

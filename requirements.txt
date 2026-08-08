@@ -1,5 +1,18 @@
-pyhdl-if
-pytest
-pytest-timeout
-scapy
-simpy
+# Libraries
+pyhdl-if==0.2.0.21303180869
+scapy==2.7.0
+simpy==4.1.2
+
+# Test runner
+pytest==9.1.1
+pytest-timeout==2.4.0
+
+# Toolchain. Pinned deliberately -- this stack is version-sensitive:
+#   * Verilator >= 5.4x is required; 5.020 cannot preprocess UVM 1.2's
+#     UVM_VERSION_STRING macro. The wheel needs a post-install patch,
+#     applied by scripts/setup_env.sh.
+#   * pyhdl-if's packer model tracks UVM 1.2, not 1800.2-2020.
+# See src/verif/pyhdl/best_practices.md before bumping any of these.
+fusesoc==2.4.6
+verilator==5.48.0
+verible==0.0.4071.0

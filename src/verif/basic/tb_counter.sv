@@ -33,7 +33,7 @@ module tb_counter;
 `endif
 
    // Helper tasks (mirrors pyhdl counter_test_pkg)
-   task write_count(bit [3:0] val);
+   task automatic write_count(bit [3:0] val);
       @(negedge clk);
       wr_en  = 1;
       data_i = val;
@@ -41,12 +41,12 @@ module tb_counter;
       wr_en = 0;
    endtask
 
-   task read_count(output bit [3:0] val);
+   task automatic read_count(output bit [3:0] val);
       wr_en = 0;
       val   = data_o;
    endtask
 
-   task check_count(bit [3:0] exp, bit [3:0] act);
+   task automatic check_count(bit [3:0] exp, bit [3:0] act);
       if (act !== exp) $error("check failed! Expected %h, got %h", exp, act);
    endtask
 

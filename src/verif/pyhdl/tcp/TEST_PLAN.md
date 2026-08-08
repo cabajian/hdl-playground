@@ -165,11 +165,7 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
   gaps are legal (driver may stall); `last` without `valid` is illegal; segment shorter
   than 20 B at `last` is an error.
 
-**Functional coverage (lightweight, Python-side tallies reported at end of test):**
-- Flags seen on the wire: SYN, SYN-ACK, pure ACK, PSH+ACK, FIN, retransmitted seq.
-- Payload-size bins: 0 (bare ACK), 1, <MSS, ==MSS, >MSS (segmented).
-- Direction × flavor cross. SV covergroups are deliberately avoided (Verilator
-  covergroup support is partial — not worth the risk for this TB).
+Functional coverage is deliberately **out of scope** for this testbench: it verifies an integration path rather than a DUT, so there is no design space to cover. Verilator's covergroup support is also only partial.
 
 ## 6. Phasing
 
@@ -180,7 +176,7 @@ dump if the Python side stalls — mirroring the ether TB watchdog.
 | P2 | Agents/driver/monitor/scoreboard; SV-only directed sequence sends canned segments | Transport byte-exact A↔B |
 | P3 | Engines + proxies + `TimeMux`; T1 | Handshake over the wire |
 | P4 | T2, T3, N/seed plusargs, watchdog, `tests/test_tcp.py` | `pytest -k tcp` green with T3 default |
-| P5 | T4, T5, coverage tallies, `make format`/`make lint` clean, README note | Full suite green |
+| P5 | T4, T5, `make format`/`make lint` clean, README note | Full suite green |
 
 ## 7. Risks / open issues
 
