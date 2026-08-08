@@ -11,19 +11,25 @@ module tb_ether_pyhdl;
 
    // Instantiate the ether module and connect via interface
    ether dut (
-       .i_clk      (clk),
-       .i_rst      (vif.rst),
-       .i_start    (vif.start),
-       .i_valid    (vif.valid),
-       .i_num_bytes(vif.num_bytes),
-       .i_data     (vif.data),
+       .i_clk  (clk),
+       .i_rst  (vif.rst),
+       .i_valid(vif.valid),
+       .i_data (vif.data),
+
+       .o_pl_valid(vif.o_pl_valid),
+       .o_pl_data (vif.o_pl_data),
+       .o_pl_last (vif.o_pl_last),
 
        .o_valid        (vif.o_valid),
        .o_dst_mac      (vif.o_dst_mac),
        .o_src_mac      (vif.o_src_mac),
        .o_ethertype    (vif.o_ethertype),
-       .o_payload      (vif.o_payload),
-       .o_payload_bytes(vif.o_payload_bytes)
+       .o_payload_bytes(vif.o_payload_bytes),
+       .o_vlan_valid   (vif.o_vlan_valid),
+       .o_vlan_tci     (vif.o_vlan_tci),
+       .o_fcs_ok       (vif.o_fcs_ok),
+       .o_err_runt     (vif.o_err_runt),
+       .o_err_oversize (vif.o_err_oversize)
    );
 
    // Clock generation
