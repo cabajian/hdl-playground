@@ -11,7 +11,8 @@ import typing
 import hdl_if as hif
 from hdl_if.uvm import uvm_sequence_impl
 
-import tcp_item_mirror
+import tcp_item_mirror  # noqa: F401 (registers the tcp_item mirror)
+import uvm_mirror
 from tcp_model import Flags, TcpSegment
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -91,8 +92,8 @@ class TcpRunnerAPI(object):
 # idiom is read-modify-write (pack, set fields, unpack). Never unpack a freshly
 # constructed snapshot -- it would zero every field you did not set.
 #
-# options/payload are byte queues; queue element width is pinned to 8 bits by
-# tcp_item_mirror.bind() rather than inferred from the data.
+# options/payload are byte queues; the element width is pinned to 8 bits via
+# uvm_mirror.bind() + the tcp_item mirror, rather than inferred from the data.
 # ---------------------------------------------------------------------------
 def _zero_item(v):
     v.src_port = 0
@@ -175,7 +176,7 @@ class SmokeSeq(uvm_sequence_impl):
 
             # Pin queue element widths before any pack/unpack, so pyhdl-if
             # never falls back to inferring them from the data.
-            applied = tcp_item_mirror.bind(req)
+            applied = uvm_mirror.bind(req, tcp_item_mirror.tcp_item)
             logger.info(f"Mirror bound: queue element widths {applied}")
 
             v = req.pack()
