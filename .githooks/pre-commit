@@ -1,7 +1,30 @@
 #!/bin/sh
-# Pre-commit hook: ensure SystemVerilog files are formatted
+# Pre-commit hook: ensure SystemVerilog files are formatted.
+#
+# Note the two failure modes this guards against. Hooks do not inherit an
+# activated virtualenv, so verible has to be found explicitly; and without
+# `set -e` a missing formatter made `make format` fail, the diff check pass,
+# and the hook exit 0 -- silently doing nothing.
+set -e
 
-make format
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# The formatter is installed into the project venv, which is not on PATH here.
+if [ -d "$REPO_ROOT/.venv/bin" ]; then
+    PATH="$REPO_ROOT/.venv/bin:$PATH"
+    export PATH
+fi
+
+if ! command -v verible-verilog-format >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: verible-verilog-format not found."
+    echo "       Run ./scripts/setup_env.sh to install the toolchain,"
+    echo "       or commit with --no-verify to skip formatting."
+    echo ""
+    exit 1
+fi
+
+make -C "$REPO_ROOT" format
 
 # Check if formatting produced any changes
 if ! git diff --quiet; then
