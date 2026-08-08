@@ -11,7 +11,7 @@ class tcp_py_relay extends uvm_object;
    endfunction
 
    function void relay(tcp_byte_q_t data);
-      py_list lst;
+      py_list  lst;
       PyObject py_long;
 
       lst = new();

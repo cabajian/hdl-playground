@@ -38,8 +38,8 @@ class tcp_driver extends uvm_driver #(tcp_item);
          seq_item_port.get_next_item(req);
 
          bytes = req.pack_bytes();
-         `uvm_info(get_name(), $sformatf("Driving %0d bytes: %s", bytes.size(),
-                                         req.convert2string()), UVM_HIGH)
+         `uvm_info(get_name(), $sformatf("Driving %0d bytes: %s", bytes.size(), req.convert2string()
+                   ), UVM_HIGH)
 
          foreach (bytes[i]) begin
             @(posedge vif.clk);

@@ -32,17 +32,35 @@ class tcp_scoreboard extends uvm_component;
       join
    endtask
 
-   task automatic compare_stream(uvm_tlm_analysis_fifo #(tcp_item) exp_fifo,
-                                 uvm_tlm_analysis_fifo #(tcp_item) got_fifo, string tag,
+   task automatic compare_stream(uvm_tlm_analysis_fifo#(tcp_item) exp_fifo,
+                                 uvm_tlm_analysis_fifo#(tcp_item) got_fifo, string tag,
                                  ref int unsigned n_checked);
       tcp_item exp, got;
+      tcp_byte_q_t exp_b, got_b;
       forever begin
          exp_fifo.get(exp);
          got_fifo.get(got);
-         if (!got.compare(exp)) begin
+
+         // Compared on the wire image rather than via uvm_field automation:
+         // the transport contract is "these bytes came out the far side", and
+         // field-automation compare of the wide payload/options lanes behaves
+         // differently across UVM versions.
+         exp_b = exp.pack_bytes();
+         got_b = got.pack_bytes();
+
+         if (exp_b != got_b) begin
             n_errors++;
-            `uvm_error(get_name(), $sformatf("[%s] mismatch:\n  drove:    %s\n  observed: %s", tag,
-                                             exp.convert2string(), got.convert2string()))
+            `uvm_error(
+                get_name(),
+                $sformatf("[%s] mismatch (%0d vs %0d bytes):\n  drove:    %s\n  observed: %s", tag,
+                          exp_b.size(), got_b.size(), exp.convert2string(), got.convert2string()))
+            foreach (exp_b[i]) begin
+               if (i < got_b.size() && exp_b[i] != got_b[i]) begin
+                  `uvm_error(get_name(), $sformatf("[%s] first differing byte %0d: %02h vs %02h",
+                                                   tag, i, exp_b[i], got_b[i]))
+                  break;
+               end
+            end
          end
          n_checked++;
       end
@@ -50,7 +68,9 @@ class tcp_scoreboard extends uvm_component;
 
    virtual function void report_phase(uvm_phase phase);
       super.report_phase(phase);
-      `uvm_info(get_name(), $sformatf("transport checked: %0d A->B, %0d B->A, %0d errors",
-                                      n_checked_ab, n_checked_ba, n_errors), UVM_LOW)
+      `uvm_info(
+          get_name(), $sformatf(
+          "transport checked: %0d A->B, %0d B->A, %0d errors", n_checked_ab, n_checked_ba, n_errors
+          ), UVM_LOW)
    endfunction
 endclass

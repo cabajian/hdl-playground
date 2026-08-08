@@ -16,23 +16,23 @@
 class tcp_item extends uvm_sequence_item;
 
    // Protocol fields, wire order (network byte order on the wire)
-   rand bit [           15:0] src_port;
-   rand bit [           15:0] dst_port;
-   rand bit [           31:0] seq_num;
-   rand bit [           31:0] ack_num;
-   rand bit [            7:0] flags;
-   rand bit [           15:0] window;
-   rand bit [           15:0] checksum;
-   rand bit [           15:0] urgent_ptr;
+   rand bit [           15:0]      src_port;
+   rand bit [           15:0]      dst_port;
+   rand bit [           31:0]      seq_num;
+   rand bit [           31:0]      ack_num;
+   rand bit [            7:0]      flags;
+   rand bit [           15:0]      window;
+   rand bit [           15:0]      checksum;
+   rand bit [           15:0]      urgent_ptr;
 
    // Option bytes exactly as they appear on the wire (already padded to a
    // multiple of 4 by the Python codec); 40 B is the TCP header maximum.
-   rand bit [            7:0] options_len;
+   rand bit [            7:0]      options_len;
    rand bit [TCP_OPT_MAX-1:0][7:0] options;
 
    // Payload lane, bounded by the TB's engine MSS (TCP_TB_MSS)
-   rand bit [           15:0] payload_len;
-   rand bit [TCP_TB_MSS-1:0][7:0] payload;
+   rand bit [           15:0]      payload_len;
+   rand bit [ TCP_TB_MSS-1:0][7:0] payload;
 
    constraint lane_len_c {
       options_len <= TCP_OPT_MAX;
@@ -121,8 +121,17 @@ class tcp_item extends uvm_sequence_item;
       if (flags[3]) fs = {fs, "P"};
       if (flags[4]) fs = {fs, "A"};
       if (flags[5]) fs = {fs, "U"};
-      return $sformatf("%0d->%0d [%s] seq=%0d ack=%0d win=%0d opts=%0d pl=%0d", src_port, dst_port,
-                       fs, seq_num, ack_num, window, options_len, payload_len);
+      return $sformatf(
+          "%0d->%0d [%s] seq=%0d ack=%0d win=%0d opts=%0d pl=%0d",
+          src_port,
+          dst_port,
+          fs,
+          seq_num,
+          ack_num,
+          window,
+          options_len,
+          payload_len
+      );
    endfunction
 
 endclass

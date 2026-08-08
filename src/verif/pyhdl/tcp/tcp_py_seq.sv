@@ -11,18 +11,14 @@
 // create_req()/start_item()/finish_item() through the proxy handle.
 
 typedef class tcp_py_seq_helper;
-typedef class tcp_item_api;
 
-class tcp_py_seq extends uvm_sequence #(.REQ(tcp_item)) implements pyhdl_uvm_sequence_proxy_if;
+class tcp_py_seq extends uvm_sequence #(
+    .REQ(tcp_item)
+) implements pyhdl_uvm_sequence_proxy_if;
    `uvm_object_utils(tcp_py_seq)
 
    string pyclass = "";
    tcp_py_seq_helper m_helper;
-
-   // Set by the test so this sequence can publish its item API to Python
-   // before the Python body starts. side: 0 = A, 1 = B.
-   TcpRunnerAPI_exp_if py_runner;
-   int side = 0;
 
    function new(string name = "tcp_py_seq");
       super.new(name);
@@ -82,12 +78,6 @@ class tcp_py_seq extends uvm_sequence #(.REQ(tcp_item)) implements pyhdl_uvm_seq
 
       // Associate the Python object for the helper with the sequence object
       pyhdl_uvm_object_rgy::inst().register_object(this, m_helper.m_obj);
-
-      // Publish this side's item API before the Python body runs
-      if (py_runner != null) begin
-         tcp_item_api ia = new(m_helper);
-         py_runner.init_item_api(longint'(side), ia.api.m_obj);
-      end
 
       m_helper.m_exp.body();
    endtask
@@ -205,13 +195,8 @@ class tcp_py_seq_helper extends uvm_sequence_proxy_imp_impl #(tcp_py_seq_helper)
       return None;
    endfunction
 
-   // The most recent item handed to Python. tcp_item_api::fill() populates it
-   // from wire bytes -- see the R8 note there.
-   tcp_item m_last_req;
-
    virtual function PyObject create_req();
       tcp_item req = tcp_item::type_id::create();
-      m_last_req = req;
       return pyhdl_uvm_object_rgy::inst().wrap(req);
    endfunction
 
@@ -243,50 +228,5 @@ class tcp_py_seq_helper extends uvm_sequence_proxy_imp_impl #(tcp_py_seq_helper)
          `PYHDL_IF_FATAL(("can't cast back to a sequence item"))
       end
    endtask
-
-endclass
-
-// tcp_item_api: fills the sequence's current request from wire bytes.
-//
-// The UVM wrapper's field transport (req.pack()/req.unpack()) does not
-// round-trip against UVM 2020.3.1: sprint()-based layout discovery is correct,
-// but pack_ints() bitstream slicing is misaligned -- a freshly constructed,
-// all-zero item comes back with non-zero fields. Rather than depend on that,
-// the Python session sequence hands over the segment as a plain byte list
-// (the crossing the ether testbench already relies on) and the item is filled
-// here with the same codec the driver and monitor use.
-//
-// The Python sequence still owns the loop and still calls create_req(),
-// start_item() and finish_item() itself.
-class tcp_item_api implements TcpItemAPI_imp_if;
-
-   TcpItemAPI_imp_impl #(tcp_item_api) api;
-   tcp_py_seq_helper m_helper;
-
-   function new(tcp_py_seq_helper helper);
-      m_helper = helper;
-      api = new(this);
-   endfunction
-
-   virtual function void fill(input PyObject data);
-      tcp_byte_q_t bytes;
-      int num;
-      py_object item;
-
-      if (m_helper == null || m_helper.m_last_req == null) begin
-         `PYHDL_IF_FATAL(("fill() called before create_req()"))
-         return;
-      end
-
-      num = int'(PyList_Size(data));
-      for (int i = 0; i < num; i++) begin
-         item = py_object::mk(PyList_GetItem(data, i));
-         bytes.push_back(item.as_int() [7:0]);
-      end
-
-      if (!m_helper.m_last_req.unpack_bytes(bytes)) begin
-         `PYHDL_IF_FATAL(("fill(): malformed segment of %0d bytes", bytes.size()))
-      end
-   endfunction
 
 endclass

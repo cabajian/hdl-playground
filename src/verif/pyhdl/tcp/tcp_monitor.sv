@@ -40,7 +40,7 @@ class tcp_monitor extends uvm_monitor;
                   `uvm_error(get_name(), $sformatf("Segment of %0d bytes at rx_last (min 20)",
                                                    bytes.size()))
                end else begin
-                  item = tcp_item::type_id::create("mon_item");
+                  item = tcp_item::type_id::create("item");
                   if (!item.unpack_bytes(bytes)) begin
                      `uvm_error(get_name(), $sformatf("Malformed segment of %0d bytes",
                                                       bytes.size()))

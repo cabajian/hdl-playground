@@ -27,6 +27,8 @@
 `include "pyhdl_if_macros.svh"
 `include "pyhdl_uvm_macros.svh"
 
+// Name is fixed by upstream pyhdl-if: this must shadow their macro exactly.
+// verilog_lint: waive-start macro-name-style
 `undef pyhdl_uvm_type_utils
 `define pyhdl_uvm_type_utils(uvm_t, uvm_w_t, base_t, base_w_t) \
     class uvm_w_t``_w extends uvm_t``_imp_impl #(uvm_w_t) implements pyhdl_uvm_object_if; \
@@ -55,5 +57,7 @@
         uvm_w_t``_w, \
         base_t, \
         base_w_t``_w)::inst(`"uvm_t`", `"base_t`");
+
+// verilog_lint: waive-stop macro-name-style
 
 `include "pyhdl_uvm.sv"

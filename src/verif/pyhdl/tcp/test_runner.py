@@ -37,27 +37,10 @@ class TimeServiceAPI(object):
 
 
 # ---------------------------------------------------------------------------
-# Item fill: SV populates the sequence's current request from wire bytes.
-#
-# The UVM wrapper's own field transport (req.pack()/req.unpack()) does not
-# round-trip against UVM 2020.3.1 -- layout discovery from sprint() is correct,
-# but the pack_ints() bitstream slicing is misaligned, so a freshly created,
-# all-zero item reads back with non-zero fields. Handing the segment over as a
-# byte list (the crossing the ether testbench already relies on) sidesteps it.
-# The session sequence still calls create_req/start_item/finish_item itself.
-# ---------------------------------------------------------------------------
-@hif.api
-class TcpItemAPI(object):
-    @hif.imp
-    def fill(self, data: typing.List): ...
-
-
-# ---------------------------------------------------------------------------
 # Shared state between the runner API and the session sequences
 # ---------------------------------------------------------------------------
 class _State:
     ts: typing.Optional[TimeServiceAPI] = None
-    item_api: typing.Dict[int, TcpItemAPI] = {}
     errors: int = 0
     rx_count = [0, 0]
     smoke_expected: bytes = b""
@@ -78,11 +61,6 @@ class TcpRunnerAPI(object):
     def init_ts(self, ts: TimeServiceAPI):
         _State.ts = ts
         logger.info("Runner initialized with time service")
-
-    @hif.exp
-    def init_item_api(self, side: int, api: TcpItemAPI):
-        _State.item_api[side] = api
-        logger.info(f"Item API registered for side {side}")
 
     @hif.exp
     def rx_segment(self, side: int, data: typing.List):
@@ -107,6 +85,65 @@ class TcpRunnerAPI(object):
         if _State.errors:
             logger.error(f"report: {_State.errors} error(s)")
         return _State.errors
+
+
+# ---------------------------------------------------------------------------
+# Snapshot helpers for the UVM wrapper's pack()/unpack() field transport.
+#
+# req.pack() returns a detached snapshot of the item's registered fields; the
+# idiom is read-modify-write (pack, set fields, unpack). Never unpack a freshly
+# constructed snapshot -- it would zero every field you did not set.
+#
+# Lane convention: wire byte i occupies lane byte i, which is the LSB byte of
+# the packed integer, hence int.from_bytes(..., "little").
+# ---------------------------------------------------------------------------
+def _zero_item(v):
+    v.src_port = 0
+    v.dst_port = 0
+    v.seq_num = 0
+    v.ack_num = 0
+    v.flags = 0
+    v.window = 0
+    v.checksum = 0
+    v.urgent_ptr = 0
+    v.options_len = 0
+    v.options = 0
+    v.payload_len = 0
+    v.payload = 0
+
+
+def _apply_segment(v, seg_bytes: bytes):
+    """Fill a tcp_item snapshot from a wire-image segment."""
+    hdr_len = (seg_bytes[12] >> 4) * 4
+    opts = seg_bytes[20:hdr_len]
+    payload = seg_bytes[hdr_len:]
+    if len(payload) > TB_MSS:
+        raise ValueError(f"payload {len(payload)} exceeds TB_MSS {TB_MSS}")
+    if len(opts) > OPT_MAX:
+        raise ValueError(f"options {len(opts)} exceed OPT_MAX {OPT_MAX}")
+
+    _zero_item(v)
+    v.src_port = int.from_bytes(seg_bytes[0:2], "big")
+    v.dst_port = int.from_bytes(seg_bytes[2:4], "big")
+    v.seq_num = int.from_bytes(seg_bytes[4:8], "big")
+    v.ack_num = int.from_bytes(seg_bytes[8:12], "big")
+    v.flags = seg_bytes[13]
+    v.window = int.from_bytes(seg_bytes[14:16], "big")
+    v.checksum = int.from_bytes(seg_bytes[16:18], "big")
+    v.urgent_ptr = int.from_bytes(seg_bytes[18:20], "big")
+    v.options_len = len(opts)
+    v.options = int.from_bytes(opts, "little")
+    v.payload_len = len(payload)
+    v.payload = int.from_bytes(payload, "little")
+
+
+_SNAPSHOT_FIELDS = ("src_port", "dst_port", "seq_num", "ack_num", "flags", "window",
+                    "checksum", "urgent_ptr", "options_len", "options",
+                    "payload_len", "payload")
+
+
+def _snapshot_diff(a, b) -> typing.List[str]:
+    return [f for f in _SNAPSHOT_FIELDS if getattr(a, f) != getattr(b, f)]
 
 
 # ---------------------------------------------------------------------------
@@ -147,13 +184,24 @@ class SmokeSeq(uvm_sequence_impl):
 
             _State.smoke_expected = _smoke_segment()
 
-            fill = _State.item_api.get(SIDE_A)
-            if fill is None:
-                _err("SmokeSeq: item API not registered for side A")
-                return
-
+            # Field transport: read-modify-write through the UVM wrapper.
             req = self.proxy.create_req()
-            fill.fill(list(_State.smoke_expected))
+            v = req.pack()
+
+            fresh = {k: hex(x) for k, x in vars(v).items() if isinstance(x, int) and x}
+            if fresh:
+                _err(f"field transport broken: fresh item packs non-zero: {fresh}")
+
+            _apply_segment(v, _State.smoke_expected)
+            req.unpack(v)
+
+            # Round-trip: what we wrote must read back identically
+            diff = _snapshot_diff(v, req.pack())
+            if diff:
+                _err(f"field transport round-trip mismatch on: {', '.join(diff)}")
+            else:
+                logger.info("Field transport round-trip OK (all 12 fields)")
+
             await self.proxy.start_item(req)
             await self.proxy.finish_item(req)
             logger.info(f"SmokeSeq: sent {len(_State.smoke_expected)}-byte segment")

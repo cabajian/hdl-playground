@@ -46,8 +46,8 @@ class tcp_base_test extends uvm_test;
       // Defer Python startup past time 0 (async imp calls at t=0 can deadlock)
       #100ns;
       pyhdl_if_start();
-      ts        = new();
-      py_runner = new();
+      ts             = new();
+      py_runner      = new();
       relay_a.runner = py_runner;
       relay_b.runner = py_runner;
       py_runner.init_ts(ts.api.m_obj);
@@ -85,10 +85,8 @@ class tcp_smoke_test extends tcp_base_test;
 
    virtual task run_body();
       tcp_py_seq seq;
-      seq = tcp_py_seq::type_id::create("py_smoke_seq");
-      seq.pyclass   = "test_runner::SmokeSeq";
-      seq.py_runner = py_runner;
-      seq.side      = 0;
+      seq = tcp_py_seq::type_id::create("seq");
+      seq.pyclass = "test_runner::SmokeSeq";
       seq.start(env.agent_a.sequencer);
 
       // Let the driver/monitor drain, then collect the Python verdict
