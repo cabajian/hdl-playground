@@ -5,6 +5,10 @@ that run as the body of pyhdl-if's shipped UVM sequence proxy. The TCP model
 (tcp_model package) provides the engines; SystemVerilog provides transport.
 """
 
+import asyncio
+import collections
+import heapq
+import itertools
 import logging
 import typing
 
@@ -13,7 +17,8 @@ from hdl_if.uvm import uvm_sequence_impl
 
 import tcp_item_mirror  # noqa: F401 (registers the tcp_item mirror)
 import uvm_mirror
-from tcp_model import Flags, TcpSegment
+from tcp_model import Flags, TcpEngine, TcpSegment, TimerConfig
+from tcp_model.ports.sim_clock import SimScheduler
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,6 +50,21 @@ class _State:
     rcvd: typing.Dict[int, typing.List[bytes]] = {SIDE_A: [], SIDE_B: []}
     # Optional per-side consumer (P3 hands received segments to a TcpEngine)
     rx_sink: typing.Dict[int, typing.Callable[[bytes], None]] = {}
+
+    # --- P3: engines, their pending tx segments, and app-level receive data
+    mux: typing.Any = None
+    engine: typing.Dict[int, typing.Any] = {}
+    txq: typing.Dict[int, typing.Any] = {}
+    tx_event: typing.Dict[int, typing.Any] = {}
+    app_rx: typing.Dict[int, bytearray] = {}
+    done: typing.Any = None
+
+    @staticmethod
+    def init_engine_state():
+        _State.txq = {SIDE_A: collections.deque(), SIDE_B: collections.deque()}
+        _State.tx_event = {SIDE_A: asyncio.Event(), SIDE_B: asyncio.Event()}
+        _State.app_rx = {SIDE_A: bytearray(), SIDE_B: bytearray()}
+        _State.done = asyncio.Event()
 
 
 def _err(msg: str):
@@ -305,3 +325,184 @@ class TimeServiceProbe(_SessionBase):
             logger.info(f"Sequential wait_ns OK: {elapsed} ns accumulated exactly")
         except Exception as e:
             _err(f"time-service probe raised: {type(e).__name__}: {e}")
+
+
+# ===========================================================================
+# P3: two TcpEngine instances talking to each other through the SV wire
+# ===========================================================================
+
+# Timers scaled so a handshake/teardown completes in milliseconds of sim time
+# rather than the RFC's seconds (same values the model's own harness uses).
+TB_TIMERS = dict(rto_initial=0.001, rto_min=0.001, rto_max=0.008, msl=0.0005)
+TB_MSS = 256
+
+PORT_A = 50000
+PORT_B = 80
+
+
+class TimeMux:
+    """``ExternalTimeService`` for ``SimScheduler`` with one wait_ns in flight.
+
+    ``SimScheduler`` spawns a task per armed timer, and each would call
+    ``wait_ns``. Several concurrent activations wedge the simulator (see the
+    TimeServiceProbe note), so waits are funnelled through a deadline heap
+    here: callers get a future, and a single pump loop performs the one real
+    ``wait_ns`` and resolves whatever has come due.
+
+    Time only advances while :meth:`pump` runs, which is deliberate -- it keeps
+    simulation time under the testbench's control the way ``SpoofClock.run_for``
+    does in the model's standalone harness.
+    """
+
+    def __init__(self, ts):
+        self._ts = ts
+        self._heap: typing.List[typing.Tuple[int, int, typing.Any]] = []
+        self._ctr = itertools.count()
+
+    # -- ExternalTimeService ------------------------------------------------
+    def now_ns(self) -> int:
+        return self._ts.now_ns()
+
+    async def wait_ns(self, delay_ns: int) -> None:
+        deadline = self.now_ns() + max(0, int(delay_ns))
+        fut = asyncio.get_running_loop().create_future()
+        heapq.heappush(self._heap, (deadline, next(self._ctr), fut))
+        await fut
+
+    # -- driving ------------------------------------------------------------
+    @property
+    def pending(self) -> int:
+        return sum(1 for _, _, f in self._heap if not f.cancelled())
+
+    def _fire_due(self) -> int:
+        """Resolve every waiter whose deadline has passed. Returns how many."""
+        fired = 0
+        now = self.now_ns()
+        while self._heap and self._heap[0][0] <= now:
+            _, _, fut = heapq.heappop(self._heap)
+            if not fut.cancelled():
+                fut.set_result(None)
+                fired += 1
+        return fired
+
+    async def _settle(self) -> None:
+        # Let engine cascades and freshly armed timers reach their first await
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+    async def step(self, max_ns: int) -> None:
+        """Advance simulation time by at most ``max_ns``, servicing timers."""
+        await self._settle()
+        self._fire_due()
+        await self._settle()
+
+        target = self.now_ns() + max_ns
+        live = [d for d, _, f in self._heap if not f.cancelled()]
+        if live:
+            target = min(target, min(live))
+
+        delta = target - self.now_ns()
+        if delta > 0:
+            await self._ts.wait_ns(delta)
+
+        self._fire_due()
+        await self._settle()
+
+
+def _tx_of(side: int):
+    """Return a tx() callback that queues a segment for `side` to drive."""
+    def tx(seg: bytes) -> None:
+        _State.txq[side].append(seg)
+        _State.tx_event[side].set()
+    return tx
+
+
+def build_engines() -> typing.Tuple[typing.Any, typing.Any]:
+    """Create the two engines, wired to the SV transport through the runner."""
+    _State.init_engine_state()
+    mux = TimeMux(_State.ts)
+    sched = SimScheduler(mux, asyncio.get_running_loop())
+    cfg = TimerConfig(**TB_TIMERS)
+
+    a = TcpEngine(local_port=PORT_A, remote_port=PORT_B, scheduler=sched,
+                  tx=_tx_of(SIDE_A), snd_mss=TB_MSS, iss=1000, timers=cfg,
+                  on_data=lambda d: _State.app_rx[SIDE_A].extend(d), name="A")
+    b = TcpEngine(local_port=PORT_B, remote_port=PORT_A, scheduler=sched,
+                  tx=_tx_of(SIDE_B), snd_mss=TB_MSS, iss=5000, timers=cfg,
+                  on_data=lambda d: _State.app_rx[SIDE_B].extend(d), name="B")
+
+    # A monitor on side X observes what the far side put on the wire, so its
+    # segments are what engine X receives.
+    _State.rx_sink[SIDE_A] = a.on_segment
+    _State.rx_sink[SIDE_B] = b.on_segment
+
+    _State.mux = mux
+    _State.engine[SIDE_A] = a
+    _State.engine[SIDE_B] = b
+    return a, b
+
+
+class _EngineSeq(_SessionBase):
+    """Common body: drain this side's tx queue onto the wire, forever."""
+
+    async def drain(self) -> None:
+        q = _State.txq[self.SIDE]
+        while q:
+            await self.send_segment(q.popleft())
+
+
+class EngineSeqB(_EngineSeq):
+    """Side B: purely reactive -- wake when engine B emits, then drive."""
+
+    SIDE = SIDE_B
+
+    async def body(self):
+        try:
+            ev = _State.tx_event[self.SIDE]
+            while not _State.done.is_set():
+                await ev.wait()
+                ev.clear()
+                await self.drain()
+            await self.drain()
+        except Exception as e:
+            _err(f"EngineSeqB raised: {type(e).__name__}: {e}")
+
+
+class HandshakeSeqA(_EngineSeq):
+    """Side A: opens the connection, drives its own segments, and pumps time."""
+
+    SIDE = SIDE_A
+
+    async def body(self):
+        try:
+            a, b = build_engines()
+
+            b.passive_open()
+            a.active_open()
+            logger.info(f"open: A={a.state.name} B={b.state.name}")
+
+            deadline_ns = _State.ts.now_ns() + 20_000_000  # 20 ms of sim time
+            while _State.ts.now_ns() < deadline_ns:
+                await self.drain()
+                if a.state.name == "ESTABLISHED" and b.state.name == "ESTABLISHED":
+                    break
+                await _State.mux.step(200_000)  # <= 200 us per step
+
+            logger.info(f"after handshake: A={a.state.name} B={b.state.name} "
+                        f"at {_State.ts.now_ns()} ns")
+
+            if a.state.name != "ESTABLISHED" or b.state.name != "ESTABLISHED":
+                _err(f"handshake incomplete: A={a.state.name} B={b.state.name}")
+            else:
+                ta, tb = a.get_tcb_snapshot(), b.get_tcb_snapshot()
+                if ta["snd_nxt"] != tb["rcv_nxt"] or tb["snd_nxt"] != ta["rcv_nxt"]:
+                    _err(f"sequence spaces disagree: A={ta} B={tb}")
+                else:
+                    logger.info("Handshake OK: both ESTABLISHED, sequence spaces agree")
+
+            _State.done.set()
+            _State.tx_event[SIDE_B].set()  # release side B
+        except Exception as e:
+            _err(f"HandshakeSeqA raised: {type(e).__name__}: {e}")
+            _State.done.set()
+            _State.tx_event[SIDE_B].set()

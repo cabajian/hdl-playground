@@ -70,7 +70,7 @@ class tcp_base_test extends uvm_test;
    endtask
 
    // Start a Python-bodied sequence on `seqr`. Blocks until its body returns.
-   task start_py_seq(uvm_sequencer #(tcp_item) seqr, string pyclass, string name = "py_seq");
+   task start_py_seq(uvm_sequencer#(tcp_item) seqr, string pyclass, string name = "py_seq");
       tcp_py_seq seq;
       seq = tcp_py_seq::type_id::create(name);
       seq.pyclass = pyclass;
@@ -118,7 +118,7 @@ endclass
 class tcp_transport_test extends tcp_base_test;
    `uvm_component_utils(tcp_transport_test)
 
-   localparam int unsigned XportSegments = 4;
+   localparam int unsigned XPORT_SEGMENTS = 4;
 
    function new(string name, uvm_component parent);
       super.new(name, parent);
@@ -135,17 +135,56 @@ class tcp_transport_test extends tcp_base_test;
       #5000ns;
       check_python_report();
 
-      if (env.scoreboard.n_checked_ab != XportSegments) begin
+      if (env.scoreboard.n_checked_ab != XPORT_SEGMENTS) begin
          `uvm_error(get_name(), $sformatf("Expected %0d A->B transport items, got %0d",
-                                          XportSegments, env.scoreboard.n_checked_ab))
+                                          XPORT_SEGMENTS, env.scoreboard.n_checked_ab))
       end
-      if (env.scoreboard.n_checked_ba != XportSegments) begin
+      if (env.scoreboard.n_checked_ba != XPORT_SEGMENTS) begin
          `uvm_error(get_name(), $sformatf("Expected %0d B->A transport items, got %0d",
-                                          XportSegments, env.scoreboard.n_checked_ba))
+                                          XPORT_SEGMENTS, env.scoreboard.n_checked_ba))
       end
       if (env.scoreboard.n_errors != 0) begin
          `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
                                           env.scoreboard.n_errors))
       end
+   endtask
+endclass
+
+// T1 (P3): two Python TcpEngine instances complete a three-way handshake with
+// every segment carried across the SystemVerilog wire. Side A opens the
+// connection and pumps simulation time; side B reacts. Both sequences run
+// concurrently on their own sequencers.
+class tcp_handshake_test extends tcp_base_test;
+   `uvm_component_utils(tcp_handshake_test)
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+   endfunction
+
+   virtual task run_body();
+      fork
+         start_py_seq(env.agent_a.sequencer, "test_runner::HandshakeSeqA", "seq_a");
+         start_py_seq(env.agent_b.sequencer, "test_runner::EngineSeqB", "seq_b");
+      join
+
+      #2000ns;
+      check_python_report();
+
+      // SYN (A->B), SYN-ACK (B->A), ACK (A->B)
+      if (env.scoreboard.n_checked_ab < 2) begin
+         `uvm_error(get_name(), $sformatf("Expected >=2 A->B segments (SYN, ACK), got %0d",
+                                          env.scoreboard.n_checked_ab))
+      end
+      if (env.scoreboard.n_checked_ba < 1) begin
+         `uvm_error(get_name(), $sformatf("Expected >=1 B->A segment (SYN-ACK), got %0d",
+                                          env.scoreboard.n_checked_ba))
+      end
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
+      end
+      `uvm_info(get_name(), $sformatf("handshake segments: %0d A->B, %0d B->A",
+                                      env.scoreboard.n_checked_ab, env.scoreboard.n_checked_ba),
+                UVM_LOW)
    endtask
 endclass

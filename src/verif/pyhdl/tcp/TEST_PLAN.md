@@ -268,7 +268,43 @@ One knock-on: the transport scoreboard compares **wire images**
 compares the two items by object handle and always reports a miscompare here.
 Comparing bytes is also the more honest statement of what the scoreboard checks.
 
-## 11. References
+## 11. P2 / P3 results
+
+**P2 green.** `tcp_transport_test` drives four canned segments from each side
+concurrently (varying payload length including empty, with and without
+options). Both scoreboard streams are exercised for the first time: **4 A→B,
+4 B→A, 0 errors**, and each side's wire images match what the far monitor saw.
+Concurrent *sequence* activity is fine — both sides' `start_item`/`finish_item`
+interleave without trouble.
+
+**P3 green — T1 passes.** `tcp_handshake_test` runs two `TcpEngine` instances
+whose every segment crosses the SystemVerilog wire: **SYN (A→B), SYN-ACK (B→A),
+ACK (A→B)** — 2 A→B, 1 B→A, 0 errors. Both engines reach `ESTABLISHED` at
+~200 µs of simulation time, and the sequence spaces cross-check
+(`snd_nxt`/`rcv_nxt` via `get_tcb_snapshot()`).
+
+### R3 settled: TimeMux is required, and why
+
+The risk was real. Three concurrent `wait_ns` activations issued via
+`asyncio.gather` wedge Verilator's inactive region (`DIDNOTCONVERGE` at the
+converge limit) before any of them returns. `SimScheduler` spawns one task per
+armed timer, so it cannot drive the time service directly. Sequential waits
+accumulate simulation time exactly (600 ns over three waits).
+
+`TimeMux` therefore sits between `SimScheduler` and the SV time service: waiters
+go on a deadline heap and receive a future, while a single pump loop performs
+the one real `wait_ns` and resolves whatever has come due. One consequence worth
+knowing: **time only advances while `TimeMux.step()` runs**, which keeps sim time
+under the testbench's control exactly as `SpoofClock.run_for` does in the model's
+standalone harness.
+
+Sequence roles follow from that. Side A (`HandshakeSeqA`) opens the connection,
+drains its own tx queue, and pumps time; side B (`EngineSeqB`) is purely
+reactive, waking on an `asyncio.Event` its engine's `tx()` sets. A segment
+queued by an engine's `tx()` is driven by that side's sequence, and the far
+monitor relays it back into the peer's `on_segment()`.
+
+## 12. References
 
 - pyhdl-if repository (Apache-2.0): https://github.com/fvutils/pyhdl-if — Call API and
   the shipped UVM layer (`share/uvm/`, `hdl_if.uvm`).
