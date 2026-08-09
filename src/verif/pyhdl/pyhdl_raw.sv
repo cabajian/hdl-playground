@@ -31,6 +31,29 @@
 
 typedef byte unsigned byte_q_t[$];
 
+// Largest wire image that survives one pack_ints()/unpack_ints() round trip.
+//
+// The carrier packs as a 32-bit element count (uvm_pack_arrayN with metadata)
+// plus 8 bits per byte, and UVM's bitstream is UVM_STREAMBITS wide -- 4096 by
+// default, settable with `UVM_MAX_STREAMBITS. Derived rather than hardcoded so
+// it tracks a testbench that raises the limit.
+//
+// This bound is the raw path's headline limitation: it removes the packer's
+// dependence on an item's *shape*, not on its *size*. An item that does not fit
+// needs chunking, which this does not provide. 508 B is ample for the protocols
+// here (largest exercised: 288 B), so it is accepted rather than engineered
+// around -- but it is a hard ceiling, not a soft one.
+localparam int unsigned RAW_MAX_IMAGE_BYTES = (UVM_STREAMBITS - 32) / 8;
+
+// start_item/finish_item form a pair. Tracking which half we are in makes the
+// failure path correct without depending on when $finish takes effect (see
+// m_decode), and makes a missing or doubled call detectable rather than silent.
+typedef enum {
+   RAW_IDLE,  // between transactions
+   RAW_STARTED,  // start_item decoded and arbitrated; finish_item owes a send
+   RAW_FAILED  // start_item could not decode; finish_item must drive nothing
+} raw_item_state_e;
+
 // A sequence item that can state its own wire image, in both directions.
 //
 // This is the contract the raw path needs, but it is not specific to it: a
@@ -133,12 +156,22 @@ class pyhdl_raw_seq extends uvm_sequence implements pyhdl_uvm_sequence_proxy_if;
 
       pyhdl_if_start();
 
-      // The carrier's only field is a queue, and UVM emits a queue's element
-      // count only when the packer has metadata enabled -- while pyhdl-if's
-      // Python model always reads it. Without this every image would arrive
-      // empty. Enforced here rather than left to the test, so this sequence
-      // works in a testbench that has never needed it (best practices 5.2).
-      uvm_default_packer.use_metadata = 1;
+      // GLOBAL STATE, set deliberately. The carrier's only field is a queue,
+      // and UVM emits a queue's element count only when the packer has metadata
+      // enabled -- while pyhdl-if's Python model always reads it. Without this
+      // every image arrives empty (best practices 5.2).
+      //
+      // Set here rather than left to the test so this sequence works in a
+      // testbench that has never needed it, but announced when it actually
+      // changes anything: uvm_default_packer is shared, so a testbench that
+      // deliberately runs without metadata would see its setting flipped.
+      // Nothing in this repo does, and pyhdl-if's model cannot work without it.
+      if (!uvm_default_packer.use_metadata) begin
+         `uvm_info(get_name(),
+                   "enabling uvm_default_packer.use_metadata=1 (global; required for queue fields)",
+                   UVM_LOW)
+         uvm_default_packer.use_metadata = 1;
+      end
 
       if (pyclass == "") begin
          `uvm_fatal(get_name(), "No value specified for 'pyclass'")
@@ -200,8 +233,14 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
    // Factory type name of the item to build, and the item start_item built.
    // The decoded handle is cached because UVM needs start_item and finish_item
    // to name the same object, and Python only ever holds the raw one.
+   //
+   // A single slot, not a map: best_practices.md 1 requires that at most one
+   // pyhdl-if imp task is in flight, so transactions through this helper are
+   // strictly serialized. m_state turns a violation of that invariant into a
+   // reported error instead of a silently wrong transaction.
    string item_type;
    uvm_sequence_item m_decoded = null;
+   raw_item_state_e m_state = RAW_IDLE;
 
    function new(string clsname, PyObject cls);
       PyObject impl_o, args;
@@ -319,9 +358,22 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
       return pyhdl_uvm_object_rgy::inst().wrap(rsp);
    endfunction
 
+   // Short hex preview of an image, for diagnostics. Whole thing when small.
+   local function string m_preview(byte_q_t b);
+      string s = "";
+      int unsigned n = (b.size() > 16) ? 16 : b.size();
+      for (int unsigned i = 0; i < n; i++) s = {s, $sformatf("%02h", b[i])};
+      return (b.size() > n) ? {s, $sformatf("... (%0d B total)", b.size())} : s;
+   endfunction
+
    // Build `item_type` from the factory and let the item deserialize itself.
    // This is the whole of the type-specific work, and none of it is written
    // per type: the name is a string and the codec is the item's own method.
+   //
+   // Returns null on failure, having reported why. Callers must not depend on
+   // the run stopping: a report is not a control-flow transfer, and $finish is
+   // deferred to the end of the timestep, so execution continues either way.
+   // m_state, not termination, is what keeps the failure path correct.
    virtual function uvm_sequence_item m_decode(PyObject item);
       uvm_object item_o;
       bytes_item raw;
@@ -329,16 +381,23 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
       uvm_sequence_item seq_item;
       seq_item_serializable target;
 
-      // Drop any previously decoded handle first. PYHDL_IF_FATAL calls $finish,
-      // which Verilator defers to the end of the timestep rather than aborting
-      // this call, so Python still gets its start_item() return and still calls
-      // finish_item(). Without this, that call would re-drive the *previous*
-      // item on the way out.
-      m_decoded = null;
-
       item_o = pyhdl_uvm_object_rgy::inst().get_object(item);
       if (!$cast(raw, item_o)) begin
-         `PYHDL_IF_FATAL(("raw path: Python did not hand back a bytes_item"))
+         `uvm_error(get_name(), $sformatf(
+                                    "raw path: Python returned a '%0s', expected a bytes_item",
+                                    (item_o == null) ? "null" : item_o.get_type_name()))
+         return null;
+      end
+
+      // Bound the image before anything else touches it. Over the limit the
+      // pack/unpack round trip silently truncates, so a late check would be
+      // reporting on data that is already wrong.
+      if (raw.raw.size() > RAW_MAX_IMAGE_BYTES) begin
+         `uvm_error(get_name(),
+                    $sformatf({"raw path: image of %0d B exceeds RAW_MAX_IMAGE_BYTES=%0d ",
+                               "(UVM_STREAMBITS=%0d). Raise `UVM_MAX_STREAMBITS or chunk the ",
+                               "transaction; this path does not fragment."}, raw.raw.size(),
+                                 RAW_MAX_IMAGE_BYTES, UVM_STREAMBITS))
          return null;
       end
 
@@ -347,43 +406,88 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
       built =
           uvm_factory::get().create_object_by_name(item_type, m_proxy.get_full_name(), "raw_req");
       if (built == null) begin
-         `PYHDL_IF_FATAL(("raw path: factory has no type '%0s'", item_type))
+         `uvm_error(get_name(),
+                    $sformatf({"raw path: UVM factory has no type registered as '%0s'. Check the ",
+                               "item's `uvm_object_utils registration and that its package is ",
+                               "imported/compiled into this binary."}, item_type))
          return null;
       end
 
       if (!$cast(target, built)) begin
-         // Report what the factory actually built: a type override is the
-         // likely cause when the requested name looks right.
-         string built_t = built.get_type_name();
-         `PYHDL_IF_FATAL(
-             ("raw path: '%0s' built '%0s', not a seq_item_serializable", item_type, built_t))
-         return null;
-      end
-
-      if (!target.from_bytes(raw.raw)) begin
-         `PYHDL_IF_FATAL(("raw path: '%0s' rejected a %0d-byte image", item_type, raw.raw.size()))
+         // Naming the built type separates "wrong name" from "type override
+         // redirected the name to something else".
+         `uvm_error(
+             get_name(),
+             $sformatf({"raw path: factory built '%0s' for requested type '%0s', which is not a ",
+                        "seq_item_serializable. Either the item does not extend it, or a factory ",
+                        "override redirected the type."}, built.get_type_name(), item_type))
          return null;
       end
 
       if (!$cast(seq_item, built)) begin
-         `PYHDL_IF_FATAL(("raw path: '%0s' is not a uvm_sequence_item", item_type))
+         `uvm_error(get_name(),
+                    $sformatf("raw path: '%0s' is not a uvm_sequence_item and cannot be driven",
+                              built.get_type_name()))
          return null;
       end
 
-      m_decoded = seq_item;
-      return m_decoded;
+      if (!target.from_bytes(raw.raw)) begin
+         `uvm_error(get_name(), $sformatf(
+                                    "raw path: '%0s'.from_bytes() rejected a %0d B image: %0s",
+                                    item_type, raw.raw.size(), m_preview(raw.raw)))
+         return null;
+      end
+
+      return seq_item;
    endfunction
 
+   // start_item and finish_item are an explicit two-state handshake. Correctness
+   // does not depend on a failed decode terminating the run.
    virtual task start_item(PyObject item);
-      uvm_sequence_item it = m_decode(item);
-      if (it != null) m_proxy.start_item(it);
+      uvm_sequence_item it;
+
+      if (m_state != RAW_IDLE) begin
+         // Serialization is guaranteed externally (best practices 1), so this
+         // means that invariant broke -- report rather than corrupt the pairing.
+         `uvm_error(get_name(),
+                    $sformatf(
+                        {"raw path: start_item() while %0s. Transactions through one proxy must ",
+                         "be serialized; check that every SV-blocking call holds sv_lock()."},
+                           m_state.name()))
+      end
+
+      m_decoded = null;
+      it        = m_decode(item);
+
+      if (it == null) begin
+         // Decode already reported. Remember the failure so finish_item drives
+         // nothing -- in particular, not the previous transaction's item.
+         m_state = RAW_FAILED;
+         return;
+      end
+
+      m_decoded = it;
+      m_state   = RAW_STARTED;
+      m_proxy.start_item(m_decoded);
    endtask
 
    virtual task finish_item(PyObject item);
-      // Reuse what start_item decoded: decoding again would hand UVM a
-      // different object than the one it arbitrated for. Null means that decode
-      // failed and already reported; stay quiet rather than drive anything.
-      if (m_decoded != null) m_proxy.finish_item(m_decoded);
+      case (m_state)
+         RAW_STARTED: begin
+            // The handle start_item arbitrated for. Re-decoding here would hand
+            // UVM a different object than the one it granted.
+            m_proxy.finish_item(m_decoded);
+         end
+         RAW_FAILED: begin
+            // start_item reported already; completing the pair quietly is right.
+         end
+         default: begin
+            `uvm_error(get_name(), "raw path: finish_item() without a matching start_item()")
+         end
+      endcase
+
+      m_decoded = null;
+      m_state   = RAW_IDLE;
    endtask
 
 endclass

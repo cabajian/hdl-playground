@@ -349,8 +349,25 @@ seq.item_type = "tcp_item";      // UVM factory name
 seq.start(any_sequencer);
 ```
 
-`pyhdl_raw_seq` sets `uvm_default_packer.use_metadata = 1` itself (§5.2), so
-this works in a testbench that has never needed it.
+#### Two constraints to accept before using it
+
+**A hard size ceiling.** The whole transaction crosses in one `pack_ints()`, so
+`UVM_STREAMBITS` bounds it: 32 bits of queue-count metadata plus 8 bits per
+byte, giving `RAW_MAX_IMAGE_BYTES = (UVM_STREAMBITS - 32) / 8` — **508 B** at
+the default 4096. Past that the round trip truncates *silently*, so the limit is
+checked in Python (`raw_mirror.MAX_IMAGE_BYTES`) where the true length is still
+known, with a backstop in SV. This path does not fragment; an item that does not
+fit needs chunking you write yourself, or a raised `` `UVM_MAX_STREAMBITS ``.
+
+**It writes global state.** `pyhdl_raw_seq` sets
+`uvm_default_packer.use_metadata = 1` in `body()`, because the carrier's only
+field is a queue and without metadata every image arrives empty (§5.2).
+`uvm_default_packer` is shared, so a testbench that deliberately ran without
+metadata would have its setting flipped. The sequence therefore only writes it
+when it is not already set, and emits a `UVM_INFO` when it does. Nothing that
+works with pyhdl-if can run with it off — the Python model always reads the
+count — so this is a safe default rather than a silent hijack, but it is global
+state and worth knowing about.
 
 #### Use a virtual base class, not an `interface class`
 
@@ -377,6 +394,15 @@ that is both impossible *and* unnecessary here:
   So an unparameterized sequence drives a `uvm_sequencer #(tcp_item)` correctly,
   provided the object it sends really is a `tcp_item` — which
   `create_object_by_name()` guarantees.
+
+> **Validated against UVM 1.2 on Verilator 5.49, and nothing else.** The
+> `send_request()` runtime `$cast` is read from the UVM 1.2 source in this repo
+> and confirmed by the passing tests here. It is a reasonable reading of
+> 1800.2-2020 too, but it has not been checked against that library or against
+> any commercial simulator. Re-verify before porting: if a simulator's
+> `send_request` type-checks earlier, or a future UVM makes the sequence's `REQ`
+> parameter load-bearing, this design needs a parameterized sequence — and §4.1
+> says Verilator cannot elaborate one.
 
 Do not let the first bullet imply per-type code, which is the mistake this
 section was originally written around. Parameterization being blocked is not a

@@ -402,6 +402,52 @@ def _scapy_segment(rng: random.Random, i: int) -> bytes:
     return wire[(wire[0] & 0x0F) * 4:]  # strip the IPv4 header
 
 
+# --- T7: images the item's codec must reject ------------------------------
+#
+# Each of these is well-formed as far as the *transport* is concerned -- a byte
+# queue of legal length -- and malformed only to tcp_item.from_bytes(). That is
+# the interesting case: the failure has to be caught by the item's codec, and
+# the proxy has to keep its start_item/finish_item pairing correct afterwards.
+RAW_RECOVERY_SEGMENTS = 2
+
+CORRUPT_IMAGES = [
+    (bytes(range(8)), "shorter than the 20 B minimum header"),
+    (bytes([0] * 12) + bytes([0xF0]) + bytes([0] * 11), "data offset 60 B exceeds a 24 B image"),
+    (bytes([0] * 12) + bytes([0x00]) + bytes([0] * 7), "data offset 0 is below the 20 B minimum"),
+]
+
+
+class RawCorruptSeq(_SessionBase):
+    """Send images the codec rejects, then good ones, and check both halves.
+
+    Corrupt images are deliberately not recorded in _State.sent: a rejected
+    image never reaches the wire, so the far side must not see it either. The
+    good segments that follow prove the proxy recovered rather than wedging or
+    re-driving the last decoded item.
+    """
+
+    SIDE = SIDE_A
+
+    async def body(self):
+        try:
+            for i, (img, why) in enumerate(CORRUPT_IMAGES):
+                logger.info(f"corrupt {i}: sending {len(img)} B -- {why}")
+                async with sv_lock():
+                    await raw_mirror.send_raw(self.proxy, img)
+
+            logger.info(f"RawCorruptSeq: {len(CORRUPT_IMAGES)} malformed images sent")
+
+            rng = random.Random(_State.seed)
+            for i in range(RAW_RECOVERY_SEGMENTS):
+                seg = _scapy_segment(rng, i)
+                await self.send_raw_segment(seg)
+                logger.info(f"recovery {i}: sent {len(seg)} B after the rejected images")
+
+            logger.info(f"RawCorruptSeq: recovered, {RAW_RECOVERY_SEGMENTS} good segments sent")
+        except Exception as e:
+            _err(f"RawCorruptSeq raised: {type(e).__name__}: {e}")
+
+
 class RawScapySeq(_SessionBase):
 
     SIDE = SIDE_A

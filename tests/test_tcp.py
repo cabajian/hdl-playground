@@ -83,6 +83,21 @@ def test_raw(tcp_cfg):
     assert "Matched 16/16 segments A->B" in out
 
 
+def test_raw_error(tcp_cfg):
+    """T7: malformed images are rejected cleanly and the path recovers.
+
+    The three rejections are expected, so the test itself clears them from the
+    report server -- `_run` still enforces UVM_ERROR == 0 on what is left.
+    """
+    out = _run("tcp_raw_error_test", tcp_cfg)
+    assert "RawCorruptSeq: 3 malformed images sent" in out
+    assert "rejected a" in out, "expected a from_bytes() rejection diagnostic"
+    assert "raw error test: 3/3 malformed images rejected, 2/2 good segments delivered" in out
+    # The malformed images must never reach the wire, so the far side sees only
+    # the two good segments.
+    assert "Matched 2/2 segments A->B" in out
+
+
 def test_handshake(tcp_cfg):
     """T1: three-way handshake, every segment across the SV wire."""
     out = _run("tcp_handshake_test", tcp_cfg)

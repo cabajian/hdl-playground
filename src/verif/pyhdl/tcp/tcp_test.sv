@@ -208,6 +208,69 @@ class tcp_raw_test extends tcp_base_test;
    endtask
 endclass
 
+// T7: the raw path's *failure* behaviour, which the happy-path test cannot show.
+//
+// Python sends three images that are legal as transport (byte queues of legal
+// length) but malformed to tcp_item::from_bytes(), then two good segments. The
+// test asserts all three were rejected, that nothing reached the wire for them,
+// and that the good segments still went through -- i.e. the proxy recovered
+// rather than wedging or re-driving the last successfully decoded item.
+//
+// The rejections are *expected* errors, so they are counted and then cleared
+// from the report server. Anything left in the count afterwards is a real
+// failure, which keeps the pytest "UVM_ERROR : 0" contract intact.
+class tcp_raw_error_test extends tcp_base_test;
+   `uvm_component_utils(tcp_raw_error_test)
+
+   localparam int unsigned CORRUPT_IMAGES = 3;
+   localparam int unsigned RECOVERY_SEGMENTS = 2;
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+   endfunction
+
+   virtual task run_body();
+      uvm_report_server rs;
+      int n_decode_err;
+      int n_wire;
+
+      start_raw_py_seq(env.agent_a.sequencer, "test_runner::RawCorruptSeq", "tcp_item", "raw_seq");
+
+      #5000ns;
+
+      // Snapshot and clear before reporting anything of our own, so a failure
+      // raised below is not wiped along with the expected rejections.
+      rs           = uvm_report_server::get_server();
+      n_decode_err = rs.get_severity_count(UVM_ERROR);
+      rs.set_severity_count(UVM_ERROR, 0);
+
+      n_wire = env.scoreboard.n_checked_ab;
+
+      if (n_decode_err != CORRUPT_IMAGES) begin
+         `uvm_error(get_name(), $sformatf("Expected %0d rejected images, saw %0d UVM_ERROR(s)",
+                                          CORRUPT_IMAGES, n_decode_err))
+      end
+      if (n_wire != RECOVERY_SEGMENTS) begin
+         `uvm_error(get_name(),
+                    $sformatf(
+                        {"Expected %0d segments on the wire (malformed images must not reach it, ",
+                         "good ones must); scoreboard checked %0d"}, RECOVERY_SEGMENTS, n_wire))
+      end
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
+      end
+
+      check_python_report();
+
+      `uvm_info(
+          get_name(),
+          $sformatf(
+              "raw error test: %0d/%0d malformed images rejected, %0d/%0d good segments delivered",
+              n_decode_err, CORRUPT_IMAGES, n_wire, RECOVERY_SEGMENTS), UVM_NONE)
+   endtask
+endclass
+
 // T1 (P3): two Python TcpEngine instances complete a three-way handshake with
 // every segment carried across the SystemVerilog wire. Side A opens the
 // connection and pumps simulation time; side B reacts. Both sequences run

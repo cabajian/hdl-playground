@@ -147,6 +147,8 @@ PSH boundaries, and multi-segment reassembly are all exercised. Random seed via
 | T5 | `tcp_loss_test` *(stretch)* | T2 with driver-side loss injection: `+drop_pct` (or a fixed drop-index list for determinism) drops whole segments A→B. | Data still delivered completely and in order (RTO retransmission recovers); Python asserts ≥1 retransmission occurred; scoreboard compare relaxed to "delivered ⊆ driven" for the lossy direction. |
 | T6 | `tcp_raw_test` | Raw-bytes transport path. scapy builds 16 segments (varying flags, option sets including empty and padded, payloads 0–256 B); Python sends each as a single byte queue and the generic `pyhdl_raw_seq` rebuilds the item in SV via the item's own `from_bytes()`. | 16 items A→B, byte-exact at the far-side monitor. Because the driver re-serializes the *reconstructed* item, this is a field-level check despite no field being named on the Python side. Added after P5 to explore an escape hatch for items the packer/printer cannot describe — see best practices §5.5. |
 
+| T7 | `tcp_raw_error_test` | Raw path failure behaviour. Three images that are legal as transport but malformed to `tcp_item::from_bytes()` (under-length, data offset beyond the image, data offset below the minimum), then two good segments. | All three rejected with a diagnostic; none reaches the wire; both good segments delivered byte-exact — i.e. the proxy recovered rather than wedging or re-driving the last decoded item. Expected errors are counted and cleared from the report server, so the run still ends `UVM_ERROR : 0`. |
+
 **End-of-test / hang safety:** the UVM test holds an objection while Python
 `start_test` runs; a sim-time watchdog (`#500ms` equivalent) fires `$fatal` with a state
 dump if the Python side stalls — mirroring the ether TB watchdog.
@@ -414,6 +416,37 @@ Both are the kind of defect a green test does not show:
   a queue, so without it every image arrives empty (§5.2) — but it was set only
   in `tcp_test.sv`. A second testbench adopting `pyhdl_raw_seq` would have hit a
   silent empty-payload failure. The sequence now sets it itself.
+
+### Review follow-ups
+
+A round of external review asked for four changes, all made:
+
+- **State correctness must not depend on `$finish` timing.** `start_item`/
+  `finish_item` are now an explicit `RAW_IDLE`/`RAW_STARTED`/`RAW_FAILED`
+  handshake. A failed decode sets `RAW_FAILED` and `finish_item` drives nothing;
+  nothing relies on the run stopping. The same state also turns a broken
+  serialization invariant (`start_item` while not idle) into a reported error
+  rather than a silently mispaired transaction.
+- **The size ceiling is explicit.** `RAW_MAX_IMAGE_BYTES = (UVM_STREAMBITS - 32)
+  / 8` — 508 B at the default — derived rather than hardcoded, checked in Python
+  where the true length is still known (past the limit the round trip truncates
+  silently) with an SV backstop. **Decision: accepted, not engineered around.**
+  The largest image here is 288 B; anything needing more wants chunking, which
+  is out of scope for this path.
+- **The `use_metadata` global is documented and announced.** `pyhdl_raw_seq`
+  writes it only when unset and emits a `UVM_INFO` when it does.
+- **Decode failure is a regression test**, not a one-off manual experiment — T7
+  above.
+
+Two further items were addressed: the factory/cast/decode diagnostics now name
+the requested type, the type the factory actually built, and a hex preview of a
+rejected image; and the portability of the `send_request` runtime `$cast` is
+called out as validated on UVM 1.2 / Verilator 5.49 only (best practices §5.5).
+
+Left as-is by agreement: the single `m_decoded` slot rather than a map (the
+serialization invariant makes a map unnecessary, and the state machine now
+detects a violation), the unparameterized generic sequence, factory-string type
+selection, and `seq_item_serializable` as an abstract base.
 
 ### Scope of the escape hatch
 

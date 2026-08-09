@@ -45,6 +45,7 @@ All share one compiled binary; select with `+UVM_TESTNAME`.
 | `tcp_teardown_test` | T4 | Both sides close and reach `CLOSED`, one via TIME-WAIT expiry |
 | `tcp_loss_test` | T5 | Data segments dropped at fixed indices; retransmission recovers every byte |
 | `tcp_raw_test` | T6 | scapy builds 16 segments; Python sends each as one `bytes_item` and SV rebuilds the `tcp_item` via `from_bytes()` — no field named on the Python side |
+| `tcp_raw_error_test` | T7 | Malformed images are rejected by `from_bytes()`, never reach the wire, and the proxy recovers: 3 rejected, then 2 good segments delivered |
 
 ## Running
 
@@ -114,7 +115,9 @@ runner of your own.
 - Both engines live in one interpreter, so side A's sequence makes the *app*
   calls for both peers. Only the resulting segments are protocol traffic, and
   those still cross the wire from their own side's sequencer.
-- `uvm_default_packer.use_metadata = 1` is set in `build_phase` and is load
-  bearing for queue fields (§5.2).
+- `uvm_default_packer.use_metadata = 1` is load bearing for queue fields (§5.2).
+  `tcp_base_test` sets it in `build_phase`; `pyhdl_raw_seq` also sets it itself
+  so the raw path works in a testbench that never needed it. It is global state
+  on `uvm_default_packer` — the sequence announces it when it changes anything.
 - Engines run at `snd_mss=256` with millisecond-scaled timers so runs finish in
   microseconds-to-milliseconds of simulation time rather than RFC seconds.

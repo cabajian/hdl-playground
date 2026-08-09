@@ -33,7 +33,18 @@ import typing
 import uvm_mirror
 from uvm_mirror import q
 
-__all__ = ["bytes_item", "bind", "send_raw"]
+__all__ = ["bytes_item", "bind", "send_raw", "MAX_IMAGE_BYTES"]
+
+# Largest image one pack_ints()/unpack_ints() round trip can carry: UVM's
+# bitstream is UVM_STREAMBITS wide (4096 unless the testbench raises
+# `UVM_MAX_STREAMBITS), and the carrier spends 32 of those bits on the queue's
+# element count. Mirrors RAW_MAX_IMAGE_BYTES in pyhdl_raw.sv.
+#
+# Checked here rather than only in SV because past this size the pack/unpack
+# round trip truncates silently -- by the time SV sees the queue, the length it
+# would test is already wrong. SV keeps a backstop check for images that arrive
+# oversized by some other route.
+MAX_IMAGE_BYTES = (4096 - 32) // 8
 
 
 @uvm_mirror.register
@@ -56,6 +67,13 @@ async def send_raw(proxy, data: bytes) -> None:
     The caller is responsible for holding whatever lock serializes SV-blocking
     calls (see best_practices.md 1) -- this issues three of them.
     """
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError(
+            f"raw image of {len(data)} B exceeds MAX_IMAGE_BYTES={MAX_IMAGE_BYTES}. "
+            "This path does not fragment: either raise `UVM_MAX_STREAMBITS on the SV "
+            "side (and MAX_IMAGE_BYTES here to match), or chunk the transaction."
+        )
+
     req = proxy.create_req()
     bind(req)
 
