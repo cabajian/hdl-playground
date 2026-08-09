@@ -381,42 +381,6 @@ An item opts in by extending `seq_item_serializable`; `tcp_item` already had
 the same codec. The argument must be the same typedef as the base's, hence
 `typedef pyhdl_raw_byte_q_t tcp_byte_q_t;`.
 
-### Verilator compiles `interface class` but cannot `$cast` to one
-
-The first attempt used an interface class, so an item could keep whatever base
-it already had. Verilator accepted the `implements` clause and the
-whole testbench elaborated and linked. It then failed at the first segment:
-`$cast` to an interface-class handle returns 0 at run time, so every decode
-reported "does not implement".
-
-Worth noting as a class of bug: this is compile-clean and elaboration-clean,
-and only shows up once stimulus flows. A virtual base class casts correctly.
-
-The first, blocking finding does not imply the second: parameterization being
-unavailable is not a reason to write per-type code.
-
-### Negative control
-
-"No field is named on the Python side, yet this is still a field-level check"
-is the load-bearing claim, so it was tested rather than asserted. Injecting
-`it.window = 16'hDEAD` into the codec after `from_bytes()` fails the test with
-`UVM_ERROR: 1` — the reconstructed item is re-serialized by the driver, so a
-wrong field changes the bytes the far-side monitor sees. Reverted after the run.
-
-### Two things review caught after it was working
-
-Both are the kind of defect a green test does not show:
-
-- **Stale decoded handle on the error paths.** `PYHDL_IF_FATAL` calls `$finish`,
-  which Verilator defers to the end of the timestep rather than aborting the
-  call — so after a failed decode Python still gets its `start_item()` return
-  and still calls `finish_item()`, which would re-drive the *previous* item.
-  `m_decoded` is now cleared at the top of the decode.
-- **`use_metadata` was the test's responsibility.** The carrier's only field is
-  a queue, so without it every image arrives empty (§5.2) — but it was set only
-  in `tcp_test.sv`. A second testbench adopting `pyhdl_raw_seq` would have hit a
-  silent empty-payload failure. The sequence now sets it itself.
-
 ### Review follow-ups
 
 A round of external review asked for four changes, all made:

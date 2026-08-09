@@ -61,12 +61,7 @@ typedef enum {
 // and a scoreboard comparing to_bytes() images are all the same codec, so it
 // belongs on the item rather than in any one component.
 //
-// An `interface class` would be tidier -- an item could keep whatever base it
-// already had -- and Verilator *compiles* one happily. It does not work at run
-// time: `$cast` to an interface-class handle returns 0 even for an object whose
-// class declares `implements`, so every decode failed with "does not
-// implement". A virtual base class casts reliably, and for a uvm_sequence_item
-// the constraint costs nothing in practice.
+// Items opt in by extending this instead of uvm_sequence_item directly.
 virtual class seq_item_serializable extends uvm_sequence_item;
 
    function new(string name = "seq_item_serializable");

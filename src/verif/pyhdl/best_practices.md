@@ -369,17 +369,6 @@ works with pyhdl-if can run with it off — the Python model always reads the
 count — so this is a safe default rather than a silent hijack, but it is global
 state and worth knowing about.
 
-#### Use a virtual base class, not an `interface class`
-
-An `interface class` would be tidier — the item could keep whatever base it
-already had — and **Verilator compiles one without complaint**. It does not
-work: `$cast` to an interface-class handle returns 0 at run time even for an
-object whose class declares `implements`, so every decode fails with "does not
-implement".
-
-Worth internalising as a shape of bug, not just this instance: it is
-compile-clean *and* elaboration-clean, and only surfaces once stimulus flows.
-
 #### Why one sequence serves every item type
 
 The instinct is `pyhdl_raw_seq #(type REQ)`, and it is worth understanding why
