@@ -19,6 +19,10 @@ UVM_MAX_STREAMBITS still applies.
 The element width is declared as 8 bits through ``uvm_mirror.q`` for the same
 reason every other queue field in this repo declares one: pyhdl-if otherwise
 infers it from the data, so an all-zero image would pack as 1-bit elements.
+
+The other queue prerequisite, ``uvm_default_packer.use_metadata = 1``, is set by
+``pyhdl_raw_seq`` itself, so a testbench using this path does not have to know
+about it.
 """
 
 from __future__ import annotations

@@ -340,14 +340,7 @@ The carrier Python fills in, `bytes_item`, is a `seq_item_serializable` too —
 its codec is the identity, so it works anywhere a serializable item is
 expected.
 
-An `interface class` would be tidier here — the item could keep whatever base
-it had — and **Verilator compiles one without complaint**. It does not work:
-`$cast` to an interface-class handle returns 0 at run time even for an object
-whose class declares `implements`, so every decode fails with "does not
-implement". This is a compile-clean, run-time-only failure, so it will not show
-up until stimulus flows. Use a virtual base class.
-
-and the test names the type with a **string**:
+The test then names the type with a **string**:
 
 ```systemverilog
 pyhdl_raw_seq seq = pyhdl_raw_seq::type_id::create("seq");
@@ -355,6 +348,20 @@ seq.pyclass   = "my_runner::MySeq";
 seq.item_type = "tcp_item";      // UVM factory name
 seq.start(any_sequencer);
 ```
+
+`pyhdl_raw_seq` sets `uvm_default_packer.use_metadata = 1` itself (§5.2), so
+this works in a testbench that has never needed it.
+
+#### Use a virtual base class, not an `interface class`
+
+An `interface class` would be tidier — the item could keep whatever base it
+already had — and **Verilator compiles one without complaint**. It does not
+work: `$cast` to an interface-class handle returns 0 at run time even for an
+object whose class declares `implements`, so every decode fails with "does not
+implement".
+
+Worth internalising as a shape of bug, not just this instance: it is
+compile-clean *and* elaboration-clean, and only surfaces once stimulus flows.
 
 #### Why one sequence serves every item type
 

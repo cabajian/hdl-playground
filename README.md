@@ -125,7 +125,10 @@ src/
     └── pyhdl/
         ├── best_practices.md    # PyHDL-IF practices, pitfalls, debugging
         ├── sim_clock.py         # simpy-backed clock shared by TBs
+        ├── sim_logging.py       # sim-time logging that interleaves with SV output
         ├── uvm_mirror.py        # declare queue element widths via a mirror class
+        ├── pyhdl_raw.sv         # raw-bytes item transport (seq_item_serializable)
+        ├── raw_mirror.py        # Python side of the raw-bytes path
         ├── counter/             # PyHDL-IF counter TB
         ├── ether/               # PyHDL-IF ether TB (scapy stimulus)
         ├── tcp/                 # TCP co-simulation TB (UVM + PyHDL-IF)

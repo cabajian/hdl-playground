@@ -401,6 +401,20 @@ is the load-bearing claim, so it was tested rather than asserted. Injecting
 `UVM_ERROR: 1` — the reconstructed item is re-serialized by the driver, so a
 wrong field changes the bytes the far-side monitor sees. Reverted after the run.
 
+### Two things review caught after it was working
+
+Both are the kind of defect a green test does not show:
+
+- **Stale decoded handle on the error paths.** `PYHDL_IF_FATAL` calls `$finish`,
+  which Verilator defers to the end of the timestep rather than aborting the
+  call — so after a failed decode Python still gets its `start_item()` return
+  and still calls `finish_item()`, which would re-drive the *previous* item.
+  `m_decoded` is now cleared at the top of the decode.
+- **`use_metadata` was the test's responsibility.** The carrier's only field is
+  a queue, so without it every image arrives empty (§5.2) — but it was set only
+  in `tcp_test.sv`. A second testbench adopting `pyhdl_raw_seq` would have hit a
+  silent empty-payload failure. The sequence now sets it itself.
+
 ### Scope of the escape hatch
 
 This removes the packer's dependence on the item's *shape*, not its *size*. The

@@ -133,6 +133,13 @@ class pyhdl_raw_seq extends uvm_sequence implements pyhdl_uvm_sequence_proxy_if;
 
       pyhdl_if_start();
 
+      // The carrier's only field is a queue, and UVM emits a queue's element
+      // count only when the packer has metadata enabled -- while pyhdl-if's
+      // Python model always reads it. Without this every image would arrive
+      // empty. Enforced here rather than left to the test, so this sequence
+      // works in a testbench that has never needed it (best practices 5.2).
+      uvm_default_packer.use_metadata = 1;
+
       if (pyclass == "") begin
          `uvm_fatal(get_name(), "No value specified for 'pyclass'")
       end
@@ -322,6 +329,13 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
       uvm_sequence_item seq_item;
       seq_item_serializable target;
 
+      // Drop any previously decoded handle first. PYHDL_IF_FATAL calls $finish,
+      // which Verilator defers to the end of the timestep rather than aborting
+      // this call, so Python still gets its start_item() return and still calls
+      // finish_item(). Without this, that call would re-drive the *previous*
+      // item on the way out.
+      m_decoded = null;
+
       item_o = pyhdl_uvm_object_rgy::inst().get_object(item);
       if (!$cast(raw, item_o)) begin
          `PYHDL_IF_FATAL(("raw path: Python did not hand back a bytes_item"))
@@ -367,7 +381,8 @@ class pyhdl_raw_seq_helper extends uvm_sequence_proxy_imp_impl #(pyhdl_raw_seq_h
 
    virtual task finish_item(PyObject item);
       // Reuse what start_item decoded: decoding again would hand UVM a
-      // different object than the one it arbitrated for.
+      // different object than the one it arbitrated for. Null means that decode
+      // failed and already reported; stay quiet rather than drive anything.
       if (m_decoded != null) m_proxy.finish_item(m_decoded);
    endtask
 
