@@ -58,7 +58,7 @@ This is *model-in-the-loop* verification. There is no RTL DUT: the things under 
   pops the queue, `create_req()`s a `tcp_item`, fills its fields from
   `TcpSegment.parse`, writes them back with the wrapper's `pack()`/`unpack()` transport,
   and calls **`start_item()`/`finish_item()` directly** → driver A serializes the item
-  to wire bytes (`pack_bytes()`) and drives `tcp_if` (one byte/clk, `last` on the final
+  to wire bytes (`to_bytes()`) and drives `tcp_if` (one byte/clk, `last` on the final
   byte) → monitor B reassembles the byte stream into a `tcp_item`, publishes it on its
   analysis port, and forwards the raw bytes to Python → bridge B calls
   `engine_b.on_segment(bytes)`. B→A is symmetric.
@@ -110,10 +110,10 @@ All SV in `src/verif/pyhdl/tcp/`, package `tcp_verif_pkg`, prefix `tcp_`.
 
 | Component | Kind | Notes |
 |---|---|---|
-| `tcp_item` | `uvm_sequence_item` | Fields mirror `TcpSegment`: `src_port`, `dst_port`, `seq`, `ack`, `flags[7:0]`, `window`, `checksum`, `urgent_ptr`, plus **byte queues** `options[$]` and `payload[$]` (`uvm_field_queue_int`; `size()` is the length, no separate `*_len` fields). Queue support needs two things pyhdl-if will not give you by default: `uvm_default_packer.use_metadata = 1` so UVM emits the 32-bit element count, and an explicit **element width** — declared as 8 bits in `tcp_item_mirror.py` and applied by `uvm_mirror.bind()`, because pyhdl-if otherwise infers it from the data. All protocol fields registered with identical print/pack flag sets (the layout invariant is print order == pack order). The item is **constraint-free** (stimulus lives in sequences); `pack_bytes()`/`unpack_bytes()` implement the `segment.py` `build()`/`parse()` wire codec for the driver/monitor (20 B header, network order, no checksum — §7). *(The plan originally specified fixed-width lanes; queues became viable once the width could be pinned — see §12.)* |
+| `tcp_item` | `uvm_sequence_item` | Fields mirror `TcpSegment`: `src_port`, `dst_port`, `seq`, `ack`, `flags[7:0]`, `window`, `checksum`, `urgent_ptr`, plus **byte queues** `options[$]` and `payload[$]` (`uvm_field_queue_int`; `size()` is the length, no separate `*_len` fields). Queue support needs two things pyhdl-if will not give you by default: `uvm_default_packer.use_metadata = 1` so UVM emits the 32-bit element count, and an explicit **element width** — declared as 8 bits in `tcp_item_mirror.py` and applied by `uvm_mirror.bind()`, because pyhdl-if otherwise infers it from the data. All protocol fields registered with identical print/pack flag sets (the layout invariant is print order == pack order). The item is **constraint-free** (stimulus lives in sequences); `to_bytes()`/`from_bytes()` implement the `segment.py` `build()`/`parse()` wire codec for the driver/monitor (20 B header, network order, no checksum — §7). *(The plan originally specified fixed-width lanes; queues became viable once the width could be pinned — see §12.)* |
 | `tcp_if` | interface | Per direction: `valid`, `data[7:0]`, `last`. Clocking block + `tb`/`dut` modports per repo best practices. |
-| `tcp_driver` | `uvm_driver #(tcp_item)` | Serializes `item.pack_bytes()` onto the TX side, one byte/clk, `last` high on final byte. Optional inter-segment gap knob. |
-| `tcp_monitor` | `uvm_monitor` | Reassembles RX bytes until `last`, `unpack_bytes()` → analysis port; also forwards raw bytes to the Python bridge (handle via `uvm_config_db`). |
+| `tcp_driver` | `uvm_driver #(tcp_item)` | Serializes `item.to_bytes()` onto the TX side, one byte/clk, `last` high on final byte. Optional inter-segment gap knob. |
+| `tcp_monitor` | `uvm_monitor` | Reassembles RX bytes until `last`, `from_bytes()` → analysis port; also forwards raw bytes to the Python bridge (handle via `uvm_config_db`). |
 | `tcp_sequencer` | typedef `uvm_sequencer #(tcp_item)` | |
 | session sequences | `tcp_py_seq` (specialized `pyhdl_uvm_sequence_proxy`) | One proxy per side, `pyclass` naming the Python session sequence (extending `uvm_sequence_impl`), which owns the engine's tx queue and calls `create_req`/`start_item`/`finish_item` directly. The shipped generic proxy does not elaborate under Verilator, so it is hand-specialized for `REQ=tcp_item` in `tcp_py_seq.sv`; the Python side is unchanged (§11). |
 | `tcp_agent` | `uvm_agent` | Driver + sequencer + monitor, `side` config ("a"/"b"). |
@@ -145,7 +145,7 @@ PSH boundaries, and multi-segment reassembly are all exercised. Random seed via
 | T3 | `tcp_bidir_test` **(headline)** | T1, then A and B each send N random messages, interleaved (alternating with random think-time in sim ns). | Both directions' delivered app bytes exactly match sent bytes; both engines `ESTABLISHED` at end; scoreboard clean; `Matched 2N/2N messages` printed for pytest. |
 | T4 | `tcp_teardown_test` | T3 with small N (5), then `close()` both sides; run past 2·MSL. | Both engines reach `CLOSED` (one via `TIME_WAIT` expiry); FIN/ACK exchange visible on the wire; no segments after both closed. |
 | T5 | `tcp_loss_test` *(stretch)* | T2 with driver-side loss injection: `+drop_pct` (or a fixed drop-index list for determinism) drops whole segments A→B. | Data still delivered completely and in order (RTO retransmission recovers); Python asserts ≥1 retransmission occurred; scoreboard compare relaxed to "delivered ⊆ driven" for the lossy direction. |
-| T6 | `tcp_raw_test` | Raw-bytes transport path. scapy builds 16 segments (varying flags, option sets including empty and padded, payloads 0–256 B); Python sends each as a single byte queue and `tcp_item_codec` rebuilds the item in SV with `unpack_bytes()`. | 16 items A→B, byte-exact at the far-side monitor. Because the driver re-serializes the *reconstructed* item, this is a field-level check despite no field being named on the Python side. Added after P5 to explore an escape hatch for items the packer/printer cannot describe — see best practices §5.5. |
+| T6 | `tcp_raw_test` | Raw-bytes transport path. scapy builds 16 segments (varying flags, option sets including empty and padded, payloads 0–256 B); Python sends each as a single byte queue and the generic `pyhdl_raw_seq` rebuilds the item in SV via the item's own `from_bytes()`. | 16 items A→B, byte-exact at the far-side monitor. Because the driver re-serializes the *reconstructed* item, this is a field-level check despite no field being named on the Python side. Added after P5 to explore an escape hatch for items the packer/printer cannot describe — see best practices §5.5. |
 
 **End-of-test / hang safety:** the UVM test holds an objection while Python
 `start_test` runs; a sim-time watchdog (`#500ms` equivalent) fires `$fatal` with a state
@@ -173,7 +173,7 @@ Functional coverage is deliberately **out of scope** for this testbench: it veri
 | Phase | Deliverable | Gate |
 |---|---|---|
 | P0 | Infra spike: empty UVM env + pyhdl-if **including its shipped UVM layer** (`pyhdl_uvm.sv`) in one Verilator binary; `tcp_time_service` T0 path; a trivial proxy sequence (`create_req`/`start_item`/`finish_item` from Python) on a plain sequencer | T0 passes — **go/no-go for the whole approach** |
-| P1 | `tcp_item` + both transports validated: (a) wire codec `pack_bytes/unpack_bytes` vs Python `build()/parse()` over golden + random vectors; (b) wrapper field transport — `sprint()` layout parse and `pack()`/`unpack()` round-trip at the full 2048-bit payload lane width | Byte-exact both ways; layout discovery correct at TB_MSS width — **go/no-go for field transport** (fallback: byte-list crossing, §9.1) |
+| P1 | `tcp_item` + both transports validated: (a) wire codec `to_bytes/from_bytes` vs Python `build()/parse()` over golden + random vectors; (b) wrapper field transport — `sprint()` layout parse and `pack()`/`unpack()` round-trip at the full 2048-bit payload lane width | Byte-exact both ways; layout discovery correct at TB_MSS width — **go/no-go for field transport** (fallback: byte-list crossing, §9.1) |
 | P2 | Agents/driver/monitor/scoreboard; SV-only directed sequence sends canned segments | Transport byte-exact A↔B |
 | P3 | Engines + proxies + `TimeMux`; T1 | Handshake over the wire |
 | P4 | T2, T3, N/seed plusargs, watchdog, `tests/test_tcp.py` | `pytest -k tcp` green with T3 default |
@@ -190,7 +190,7 @@ Functional coverage is deliberately **out of scope** for this testbench: it veri
 | R5 | `tcp_item` codec drift vs `segment.py`. | P1 golden-vector cross-check is a standing test (T-codec), not a one-off. |
 | R6 | TIME-WAIT keeps the sim alive past test end. | `msl = 0.5 ms`; T4 explicitly runs past 2·MSL; other tests end in `ESTABLISHED` and simply drop objections (engines `abort()`ed in cleanup). |
 | R7 | Checksum field is 0 by design (model computes no TCP checksum; needs IP pseudo-header the engine never sees). | Out of scope — SV transport is lossless; `tcp_item` carries the field verbatim. Documented here so nobody "fixes" it. |
-| R8 | The wrapper's field transport at wide lane widths: layout discovery parses `sprint()` output, and UVM printers may truncate very wide integrals; `pack_ints()` images are ~2.3 kbit per item at TB_MSS=256. | TB_MSS kept small (§2); P1 gate (b) validates sprint parse + pack round-trip at full width before anything depends on it. Fallback (one function to swap): session sequence passes raw segment bytes via the repo-proven `List[int]` Call-API crossing and SV fills the item with `unpack_bytes()` — `start_item`/`finish_item` still come from the Python session sequence either way. |
+| R8 | The wrapper's field transport at wide lane widths: layout discovery parses `sprint()` output, and UVM printers may truncate very wide integrals; `pack_ints()` images are ~2.3 kbit per item at TB_MSS=256. | TB_MSS kept small (§2); P1 gate (b) validates sprint parse + pack round-trip at full width before anything depends on it. Fallback (one function to swap): session sequence passes raw segment bytes via the repo-proven `List[int]` Call-API crossing and SV fills the item with `from_bytes()` — `start_item`/`finish_item` still come from the Python session sequence either way. |
 
 ## 8. Out of scope
 
@@ -266,7 +266,7 @@ library. That is why the repo's Verilator comes from the `verilator` PyPI wheel
 rather than apt (see `tests/conftest.py` notes).
 
 One knock-on: the transport scoreboard compares **wire images**
-(`pack_bytes()`), not `uvm_object::compare()`. UVM 1.2's field automation
+(`to_bytes()`), not `uvm_object::compare()`. UVM 1.2's field automation
 compares the two items by object handle and always reports a miscompare here.
 Comparing bytes is also the more honest statement of what the scoreboard checks.
 
@@ -350,30 +350,54 @@ the wire, so the scoreboard still compares byte-for-byte on everything that
 ## 13. T6 results: the raw-bytes path
 
 **Green.** `tcp_raw_test` drives 16 scapy-built segments as raw byte queues and
-`tcp_item_codec` rebuilds each `tcp_item` in SV: 16/16 byte-exact at the
+the generic `pyhdl_raw_seq` rebuilds each `tcp_item` in SV: 16/16 byte-exact at the
 far-side monitor, scoreboard 0 errors. The stimulus spans the shapes that
 matter — the 20 B minimum segment, 288 B maximum, 0/4/8/12 B option sets
 (including one needing pad-to-4), and 0/1/40/256 B payloads.
 
-### The parameterized wrapper does not survive contact with Verilator
+### The wrapper needs no type parameter at all
 
-The obvious form of this is `pyhdl_raw_seq #(type REQ)`. It cannot be built
-here: a parameterized proxy needs the self-referential helper declaration
-`helper #(REQ) extends imp_impl #(helper #(REQ))`, which is exactly the shape
-that makes V3Param abort — the bug that forced `tcp_py_seq.sv` to be
-hand-specialized in the first place (§4.1 of best practices).
+The obvious form is `pyhdl_raw_seq #(type REQ)`, and it is worth separating two
+things that look like one question.
 
-The design is therefore **runtime polymorphism**: an abstract
-`pyhdl_raw_codec` with a virtual `decode()`, and a 12-line concrete subclass
-per item type. This sidesteps parameterization entirely, compiles to one copy,
-and lets the codec be chosen per sequence instance. `tcp_py_seq` takes a
-`codec` handle; null preserves the field path byte-for-byte.
+It **cannot** be built: a parameterized proxy needs the self-referential helper
+`helper #(REQ) extends imp_impl #(helper #(REQ))`, exactly the shape that makes
+V3Param abort — the bug that forced `tcp_py_seq.sv` to be hand-specialized
+(§4.1 of best practices).
+
+It is also **not needed**, which is the more useful half and was missed on the
+first pass. `uvm_sequence`'s `REQ` defaults to `uvm_sequence_item`, `start()`
+takes a `uvm_sequencer_base`, and `uvm_sequencer_param_base::send_request()`
+`$cast`s the item at run time. An unparameterized `pyhdl_raw_seq` therefore
+drives `uvm_sequencer #(tcp_item)` correctly, because the object it sends is a
+real `tcp_item` — built by `uvm_factory::get().create_object_by_name()` from a
+string.
+
+So there is **one** raw sequence for the whole repo and **no** codec classes.
+An item opts in by extending `seq_item_serializable`; `tcp_item` already had
+`from_bytes()` with the right signature, because its driver and monitor need
+the same codec. The argument must be the same typedef as the base's, hence
+`typedef pyhdl_raw_byte_q_t tcp_byte_q_t;`.
+
+### Verilator compiles `interface class` but cannot `$cast` to one
+
+The first attempt used an interface class, so an item could keep whatever base
+it already had. Verilator accepted the `implements` clause and the
+whole testbench elaborated and linked. It then failed at the first segment:
+`$cast` to an interface-class handle returns 0 at run time, so every decode
+reported "does not implement".
+
+Worth noting as a class of bug: this is compile-clean and elaboration-clean,
+and only shows up once stimulus flows. A virtual base class casts correctly.
+
+The first, blocking finding does not imply the second: parameterization being
+unavailable is not a reason to write per-type code.
 
 ### Negative control
 
 "No field is named on the Python side, yet this is still a field-level check"
 is the load-bearing claim, so it was tested rather than asserted. Injecting
-`it.window = 16'hDEAD` into the codec after `unpack_bytes()` fails the test with
+`it.window = 16'hDEAD` into the codec after `from_bytes()` fails the test with
 `UVM_ERROR: 1` — the reconstructed item is re-serialized by the driver, so a
 wrong field changes the bytes the far-side monitor sees. Reverted after the run.
 

@@ -44,7 +44,7 @@ All share one compiled binary; select with `+UVM_TESTNAME`.
 | `tcp_bidir_test` | T3 | `+num_msgs` messages in **each** direction, interleaved |
 | `tcp_teardown_test` | T4 | Both sides close and reach `CLOSED`, one via TIME-WAIT expiry |
 | `tcp_loss_test` | T5 | Data segments dropped at fixed indices; retransmission recovers every byte |
-| `tcp_raw_test` | T6 | scapy builds 16 segments; Python sends each as one byte queue and SV rebuilds the `tcp_item` — no field named on the Python side |
+| `tcp_raw_test` | T6 | scapy builds 16 segments; Python sends each as one `bytes_item` and SV rebuilds the `tcp_item` via `from_bytes()` — no field named on the Python side |
 
 ## Running
 
@@ -89,15 +89,15 @@ runner of your own.
 
 | File | Role |
 |---|---|
-| `tcp_item.sv` | `uvm_sequence_item` mirroring `TcpSegment`; byte-queue `options`/`payload`; wire codec |
+| `tcp_item.sv` | `seq_item_serializable` mirroring `TcpSegment`; byte-queue `options`/`payload`; `to_bytes()`/`from_bytes()` wire codec |
 | `tcp_item_mirror.py` | Python mirror declaring queue element widths (8 bits) |
 | `tcp_if.sv` | Byte-stream interface (`valid`/`data`/`last`) per direction |
-| `tcp_driver.sv` / `tcp_monitor.sv` | Serialize / reassemble segments, one byte per clock |
+| `tcp_driver.sv` / `tcp_monitor.sv` | Serialize (`to_bytes`) / reassemble (`from_bytes`) segments, one byte per clock |
 | `tcp_scoreboard.sv` | Byte-exact in-order transport check, both directions |
 | `tcp_agent.sv` / `tcp_env.sv` | Per-side agent; env with two agents + scoreboard |
-| `tcp_py_seq.sv` | Sequence proxy specialized for `tcp_item` (see best practices §4.1); optional `codec` switches it to the raw-bytes path |
-| [`../pyhdl_raw.sv`](../pyhdl_raw.sv) | Generic raw-bytes item + codec base class (§5.5) |
-| [`../raw_mirror.py`](../raw_mirror.py) | Python side of the raw path: one byte-queue field, `send_raw()` |
+| `tcp_py_seq.sv` | Field-path sequence proxy, specialized for `tcp_item` (see best practices §4.1) |
+| [`../pyhdl_raw.sv`](../pyhdl_raw.sv) | `seq_item_serializable` base, `bytes_item` carrier, generic `pyhdl_raw_seq` (§5.5) |
+| [`../raw_mirror.py`](../raw_mirror.py) | Python side of the raw path: `bytes_item` mirror, `send_raw()` |
 | `pyhdl_uvm_vlt.sv` | Entry point that patches one pyhdl-if macro (§4.2) |
 | `tcp_time_service.sv` | `now_ns` / `wait_ns` exposed to Python |
 | `tcp_py_relay.sv` | Hands monitored segment bytes to the Python runner |

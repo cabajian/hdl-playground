@@ -9,7 +9,12 @@
 //
 // Queue element i is wire byte i. No separate length fields: size() is the
 // length.
-class tcp_item extends uvm_sequence_item;
+//
+// Extending seq_item_serializable (itself a uvm_sequence_item) is the entire
+// cost of opting into the raw-bytes transport path (pyhdl_raw.sv). The codec it
+// requires is not extra work: the driver, the monitor and the scoreboard all
+// needed to_bytes()/from_bytes() anyway.
+class tcp_item extends seq_item_serializable;
 
    // Protocol fields, wire order (network byte order on the wire)
    rand bit [15:0] src_port;
@@ -46,7 +51,7 @@ class tcp_item extends uvm_sequence_item;
 
    // Serialize to the wire image: 20 B header (network order) + options +
    // payload. Mirrors tcp_model/core/segment.py build().
-   function tcp_byte_q_t pack_bytes();
+   virtual function tcp_byte_q_t to_bytes();
       tcp_byte_q_t b;
       bit [3:0] off_words;
       off_words = 4'((32'd20 + 32'(options.size())) / 4);
@@ -71,7 +76,8 @@ class tcp_item extends uvm_sequence_item;
    endfunction
 
    // Populate from a wire image. Returns 0 on a malformed header.
-   function bit unpack_bytes(tcp_byte_q_t b);
+   // Mirrors tcp_model/core/segment.py parse().
+   virtual function bit from_bytes(tcp_byte_q_t b);
       int hdr_len;
 
       if (b.size() < 20) return 0;
@@ -114,25 +120,6 @@ class tcp_item extends uvm_sequence_item;
           options.size(),
           payload.size()
       );
-   endfunction
-
-endclass
-
-// Raw-bytes codec for tcp_item: the entire per-type cost of the raw transport
-// path (pyhdl_raw.sv). Python sends a wire image, this turns it back into a
-// real tcp_item using the same unpack_bytes() the monitor path already relies
-// on -- so the raw path cannot silently disagree with the field path.
-class tcp_item_codec extends pyhdl_raw_codec;
-   `uvm_object_utils(tcp_item_codec)
-
-   function new(string name = "tcp_item_codec");
-      super.new(name);
-   endfunction
-
-   virtual function uvm_sequence_item decode(pyhdl_raw_byte_q_t raw);
-      tcp_item it = tcp_item::type_id::create("raw_req");
-      if (!it.unpack_bytes(raw)) return null;
-      return it;
    endfunction
 
 endclass

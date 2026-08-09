@@ -80,14 +80,22 @@ class tcp_base_test extends uvm_test;
    endtask
 
    // Start a Python-bodied sequence on `seqr`. Blocks until its body returns.
-   // Pass `codec` to run the sequence on the raw-bytes path instead, where
-   // Python sends a wire image and SV rebuilds the item (see pyhdl_raw.sv).
-   task start_py_seq(uvm_sequencer#(tcp_item) seqr, string pyclass, string name = "py_seq",
-                     pyhdl_raw_codec codec = null);
+   task start_py_seq(uvm_sequencer#(tcp_item) seqr, string pyclass, string name = "py_seq");
       tcp_py_seq seq;
       seq = tcp_py_seq::type_id::create(name);
       seq.pyclass = pyclass;
-      seq.codec = codec;
+      seq.start(seqr);
+   endtask
+
+   // Same, on the raw-bytes path: Python sends a wire image and the item
+   // deserializes itself (pyhdl_raw.sv). There is no tcp-specific sequence
+   // class here -- pyhdl_raw_seq is generic and the item is a factory name.
+   task start_raw_py_seq(uvm_sequencer_base seqr, string pyclass, string item_type,
+                         string name = "raw_py_seq");
+      pyhdl_raw_seq seq;
+      seq = pyhdl_raw_seq::type_id::create(name);
+      seq.pyclass = pyclass;
+      seq.item_type = item_type;
       seq.start(seqr);
    endtask
 
@@ -165,11 +173,13 @@ class tcp_transport_test extends tcp_base_test;
 endclass
 
 // T6: the raw-bytes transport path. Python builds segments with scapy and
-// sends each one as a single byte queue; tcp_item_codec rebuilds the item on
-// this side with unpack_bytes(). Nothing on the Python side names a TCP field.
+// sends each one as a single byte queue; the generic pyhdl_raw_seq rebuilds the
+// item on this side via the item's own from_bytes(). Nothing on the Python
+// side names a TCP field, and nothing in SV is written for tcp_item's sake --
+// the type is just a factory name.
 //
 // The check is still field-level even though no field is named anywhere: the
-// driver re-serializes the reconstructed item with pack_bytes(), so a field
+// driver re-serializes the reconstructed item with to_bytes(), so a field
 // that came back wrong changes the bytes the far-side monitor sees, and both
 // the scoreboard and Python's report() catch it.
 class tcp_raw_test extends tcp_base_test;
@@ -182,10 +192,7 @@ class tcp_raw_test extends tcp_base_test;
    endfunction
 
    virtual task run_body();
-      tcp_item_codec codec;
-      codec = tcp_item_codec::type_id::create("codec");
-
-      start_py_seq(env.agent_a.sequencer, "test_runner::RawScapySeq", "raw_seq", codec);
+      start_raw_py_seq(env.agent_a.sequencer, "test_runner::RawScapySeq", "tcp_item", "raw_seq");
 
       #5000ns;
       check_python_report();

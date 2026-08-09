@@ -242,8 +242,8 @@ class _SessionBase(uvm_sequence_impl):
         """Same, but over the raw-bytes path (pyhdl_raw.sv).
 
         Python sets one byte-queue field instead of ten typed ones; SV rebuilds
-        the tcp_item with unpack_bytes(). Only valid on a sequence started with
-        a codec -- create_req() hands back a pyhdl_raw_item in that mode.
+        the tcp_item with from_bytes(). Only valid on a sequence started with
+        an item_type -- create_req() hands back a bytes_item in that mode.
         """
         async with sv_lock():
             _State.sent[self.SIDE].append(seg_bytes)
@@ -357,11 +357,11 @@ class XportSeqB(_XportSeq):
 # Raw-bytes path: scapy builds the segments, SV reconstructs the items.
 #
 # Nothing here knows the TCP header layout -- contrast _apply_segment(), which
-# has to spell out all ten fields. scapy serializes, SV's unpack_bytes()
+# has to spell out all ten fields. scapy serializes, SV's from_bytes()
 # deserializes, and the only thing crossing the packer is one byte queue.
 #
 # The check is end-to-end and field-level despite never naming a field: the
-# driver re-serializes the *reconstructed* item with pack_bytes(), so if any
+# driver re-serializes the *reconstructed* item with to_bytes(), so if any
 # field came back wrong the far-side monitor's bytes differ and report()
 # catches it.
 # ---------------------------------------------------------------------------

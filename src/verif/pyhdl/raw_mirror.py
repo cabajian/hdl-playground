@@ -29,13 +29,13 @@ import typing
 import uvm_mirror
 from uvm_mirror import q
 
-__all__ = ["pyhdl_raw_item", "bind", "send_raw"]
+__all__ = ["bytes_item", "bind", "send_raw"]
 
 
 @uvm_mirror.register
 @dc.dataclass
-class pyhdl_raw_item:
-    """Mirror of the SV ``pyhdl_raw_item``: one byte queue, nothing else."""
+class bytes_item:
+    """Mirror of the SV ``bytes_item``: one byte queue, nothing else."""
 
     raw: typing.List[int] = q(8)
 
@@ -43,7 +43,7 @@ class pyhdl_raw_item:
 def bind(req) -> None:
     """Declare the queue element width on `req`'s type, once per SV type."""
     if not uvm_mirror.is_bound(req):
-        uvm_mirror.bind(req, pyhdl_raw_item)
+        uvm_mirror.bind(req, bytes_item)
 
 
 async def send_raw(proxy, data: bytes) -> None:

@@ -45,8 +45,8 @@ class tcp_scoreboard extends uvm_component;
          // the transport contract is "these bytes came out the far side", and
          // field-automation compare of the wide payload/options lanes behaves
          // differently across UVM versions.
-         exp_b = exp.pack_bytes();
-         got_b = got.pack_bytes();
+         exp_b = exp.to_bytes();
+         got_b = got.to_bytes();
 
          if (exp_b != got_b) begin
             n_errors++;

@@ -308,7 +308,7 @@ instead — which is also a more honest statement of what a transport scoreboard
 checks:
 
 ```systemverilog
-if (exp.pack_bytes() != got.pack_bytes()) ...
+if (exp.to_bytes() != got.to_bytes()) ...
 ```
 
 ### 5.5 When the item is too awkward to mirror, send raw bytes
@@ -318,26 +318,66 @@ Some cannot: nested objects, unions, fields whose width the mirror has no way
 to express. Rather than fight the mirror, send the item's **wire image** as a
 single byte queue and rebuild it in SystemVerilog.
 
-`pyhdl_raw.sv` + `raw_mirror.py` implement this. Python assigns one field:
+`pyhdl_raw.sv` + `raw_mirror.py` implement this, and **nothing about it is
+per-item-type**. Python assigns one field:
 
 ```python
 await raw_mirror.send_raw(self.proxy, bytes(scapy_packet))
 ```
 
-and SystemVerilog rebuilds the real item through a small per-type codec:
+An item opts in by extending `seq_item_serializable` (itself a
+`uvm_sequence_item`) — no new class. The codec it asks for is not extra work: a
+driver serializing, a monitor reassembling and a scoreboard comparing wire
+images all need exactly these two methods, so they belong on the item:
 
 ```systemverilog
-class tcp_item_codec extends pyhdl_raw_codec;
-   virtual function uvm_sequence_item decode(pyhdl_raw_byte_q_t raw);
-      tcp_item it = tcp_item::type_id::create("raw_req");
-      if (!it.unpack_bytes(raw)) return null;   // null => caller reports
-      return it;
-   endfunction
-endclass
+class tcp_item extends seq_item_serializable;
+   virtual function byte_q_t to_bytes();            // already existed
+   virtual function bit      from_bytes(byte_q_t b); // already existed
 ```
 
-The proxy sequence takes a `codec` handle; non-null switches `create_req()` to
-hand Python a `pyhdl_raw_item` and routes `start_item` through `decode()`.
+The carrier Python fills in, `bytes_item`, is a `seq_item_serializable` too —
+its codec is the identity, so it works anywhere a serializable item is
+expected.
+
+An `interface class` would be tidier here — the item could keep whatever base
+it had — and **Verilator compiles one without complaint**. It does not work:
+`$cast` to an interface-class handle returns 0 at run time even for an object
+whose class declares `implements`, so every decode fails with "does not
+implement". This is a compile-clean, run-time-only failure, so it will not show
+up until stimulus flows. Use a virtual base class.
+
+and the test names the type with a **string**:
+
+```systemverilog
+pyhdl_raw_seq seq = pyhdl_raw_seq::type_id::create("seq");
+seq.pyclass   = "my_runner::MySeq";
+seq.item_type = "tcp_item";      // UVM factory name
+seq.start(any_sequencer);
+```
+
+#### Why one sequence serves every item type
+
+The instinct is `pyhdl_raw_seq #(type REQ)`, and it is worth understanding why
+that is both impossible *and* unnecessary here:
+
+- **Impossible.** A parameterized proxy needs the self-referential helper
+  `helper #(REQ) extends imp_impl #(helper #(REQ))`, the shape that makes
+  V3Param abort (§4.1) — the bug behind `tcp_py_seq.sv`.
+- **Unnecessary.** `uvm_sequence`'s `REQ` defaults to `uvm_sequence_item`,
+  `start()` takes a `uvm_sequencer_base`, and
+  `uvm_sequencer_param_base::send_request()` `$cast`s the item **at run time**.
+  So an unparameterized sequence drives a `uvm_sequencer #(tcp_item)` correctly,
+  provided the object it sends really is a `tcp_item` — which
+  `create_object_by_name()` guarantees.
+
+Do not let the first bullet imply per-type code, which is the mistake this
+section was originally written around. Parameterization being blocked is not a
+reason to hand-write anything; runtime dispatch replaces it entirely.
+
+One gotcha when wiring an item up: the argument type must be *the same typedef*
+as the interface's, not merely the same shape, or the override will not match.
+This repo does `typedef pyhdl_raw_byte_q_t tcp_byte_q_t;`.
 
 Three things are worth knowing before reaching for it:
 

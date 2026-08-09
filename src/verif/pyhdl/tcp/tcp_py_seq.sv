@@ -20,12 +20,6 @@ class tcp_py_seq extends uvm_sequence #(
    string pyclass = "";
    tcp_py_seq_helper m_helper;
 
-   // Set this to switch the sequence to the raw-bytes path (pyhdl_raw.sv):
-   // create_req() then hands Python a single-byte-queue pyhdl_raw_item, and
-   // this codec turns the image it fills in back into a tcp_item. Left null,
-   // the sequence behaves exactly as before and Python sets fields directly.
-   pyhdl_raw_codec codec = null;
-
    function new(string name = "tcp_py_seq");
       super.new(name);
    endfunction
@@ -81,7 +75,6 @@ class tcp_py_seq extends uvm_sequence #(
 
       m_helper = new(pyclass, cls);
       m_helper.m_proxy = this;
-      m_helper.codec = codec;
 
       // Associate the Python object for the helper with the sequence object
       pyhdl_uvm_object_rgy::inst().register_object(this, m_helper.m_obj);
@@ -96,12 +89,6 @@ class tcp_py_seq_helper extends uvm_sequence_proxy_imp_impl #(tcp_py_seq_helper)
 
    uvm_sequence_base m_proxy;
    uvm_sequence_proxy_exp_impl m_exp;
-
-   // Raw-bytes path. `codec` non-null selects it; `m_decoded` carries the
-   // reconstructed item from start_item to finish_item, because UVM requires
-   // both calls to name the same handle and Python only ever holds the raw one.
-   pyhdl_raw_codec codec = null;
-   uvm_sequence_item m_decoded = null;
 
    function new(string clsname, PyObject cls);
       PyObject impl_o, args;
@@ -209,13 +196,8 @@ class tcp_py_seq_helper extends uvm_sequence_proxy_imp_impl #(tcp_py_seq_helper)
    endfunction
 
    virtual function PyObject create_req();
-      if (codec != null) begin
-         pyhdl_raw_item raw = pyhdl_raw_item::type_id::create();
-         return pyhdl_uvm_object_rgy::inst().wrap(raw);
-      end else begin
-         tcp_item req = tcp_item::type_id::create();
-         return pyhdl_uvm_object_rgy::inst().wrap(req);
-      end
+      tcp_item req = tcp_item::type_id::create();
+      return pyhdl_uvm_object_rgy::inst().wrap(req);
    endfunction
 
    virtual function PyObject create_rsp();
@@ -223,43 +205,28 @@ class tcp_py_seq_helper extends uvm_sequence_proxy_imp_impl #(tcp_py_seq_helper)
       return pyhdl_uvm_object_rgy::inst().wrap(rsp);
    endfunction
 
-   // Resolve the Python-held object to the item UVM should actually see. On
-   // the raw path that is a freshly decoded item, not the one Python filled in.
-   virtual function uvm_sequence_item m_resolve(PyObject item);
+   virtual task start_item(PyObject item);
       uvm_object item_o;
       uvm_sequence_item uvm_item;
-      pyhdl_raw_item raw;
 
       item_o = pyhdl_uvm_object_rgy::inst().get_object(item);
-      if (!$cast(uvm_item, item_o)) begin
+      if ($cast(uvm_item, item_o)) begin
+         m_proxy.start_item(uvm_item);
+      end else begin
          `PYHDL_IF_FATAL(("can't cast back to a sequence item"))
-         return null;
       end
-
-      if (codec == null) return uvm_item;
-
-      if (!$cast(raw, uvm_item)) begin
-         `PYHDL_IF_FATAL(("raw path: item is not a pyhdl_raw_item"))
-         return null;
-      end
-
-      m_decoded = codec.decode(raw.raw);
-      if (m_decoded == null) begin
-         `PYHDL_IF_FATAL(("raw path: codec rejected a %0d-byte image", raw.raw.size()))
-      end
-      return m_decoded;
-   endfunction
-
-   virtual task start_item(PyObject item);
-      uvm_sequence_item uvm_item = m_resolve(item);
-      if (uvm_item != null) m_proxy.start_item(uvm_item);
    endtask
 
    virtual task finish_item(PyObject item);
-      // On the raw path reuse the handle start_item already decoded: decoding
-      // again would hand UVM a different object than the one it arbitrated for.
-      uvm_sequence_item uvm_item = (codec != null) ? m_decoded : m_resolve(item);
-      if (uvm_item != null) m_proxy.finish_item(uvm_item);
+      uvm_object item_o;
+      uvm_sequence_item uvm_item;
+
+      item_o = pyhdl_uvm_object_rgy::inst().get_object(item);
+      if ($cast(uvm_item, item_o)) begin
+         m_proxy.finish_item(uvm_item);
+      end else begin
+         `PYHDL_IF_FATAL(("can't cast back to a sequence item"))
+      end
    endtask
 
 endclass

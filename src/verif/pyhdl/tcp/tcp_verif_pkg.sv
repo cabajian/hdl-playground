@@ -13,9 +13,13 @@ package tcp_verif_pkg;
    // pack image well under UVM_MAX_STREAMBITS (4096) for pack_ints.
    localparam int unsigned TCP_TB_MSS = 256;
 
-   typedef byte unsigned tcp_byte_q_t[$];
-
    `include "pyhdl_raw.sv"
+
+   // Same type, not merely the same shape: tcp_item::from_bytes() overrides the
+   // pure virtual in seq_item_serializable, so the argument types must match
+   // rather than just be structurally equal.
+   typedef byte_q_t tcp_byte_q_t;
+
    `include "tcp_item.sv"
    `include "tcp_py_seq.sv"
    `include "tcp_driver.sv"

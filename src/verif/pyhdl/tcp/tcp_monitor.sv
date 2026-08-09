@@ -41,7 +41,7 @@ class tcp_monitor extends uvm_monitor;
                                                    bytes.size()))
                end else begin
                   item = tcp_item::type_id::create("item");
-                  if (!item.unpack_bytes(bytes)) begin
+                  if (!item.from_bytes(bytes)) begin
                      `uvm_error(get_name(), $sformatf("Malformed segment of %0d bytes",
                                                       bytes.size()))
                   end else begin

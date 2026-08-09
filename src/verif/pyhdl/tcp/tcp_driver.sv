@@ -37,7 +37,7 @@ class tcp_driver extends uvm_driver #(tcp_item);
       forever begin
          seq_item_port.get_next_item(req);
 
-         bytes = req.pack_bytes();
+         bytes = req.to_bytes();
          `uvm_info(get_name(), $sformatf("Driving %0d bytes: %s", bytes.size(), req.convert2string()
                    ), UVM_HIGH)
 
