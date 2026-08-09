@@ -1,0 +1,63 @@
+"""Python side of the raw-bytes transport (see pyhdl_raw.sv).
+
+Where the normal path has Python assign every field of a mirror object, this
+path has it assign exactly one: a byte queue holding the transaction's wire
+image. SystemVerilog reconstructs the real sequence item from those bytes.
+
+Use it when an item's *shape* is awkward for pyhdl-if's packer or UVM's printer
+-- nested objects, unions, fields whose width the mirror cannot express -- and
+the item already has, or can cheaply get, a byte-level codec. It does not help
+with item *size*: the same total bytes still cross in one pack, so
+UVM_MAX_STREAMBITS still applies.
+
+    import raw_mirror
+
+    class MySeq(uvm_sequence_impl):
+        async def body(self):
+            await raw_mirror.send_raw(self.proxy, bytes(some_packet))
+
+The element width is declared as 8 bits through ``uvm_mirror.q`` for the same
+reason every other queue field in this repo declares one: pyhdl-if otherwise
+infers it from the data, so an all-zero image would pack as 1-bit elements.
+"""
+
+from __future__ import annotations
+
+import dataclasses as dc
+import typing
+
+import uvm_mirror
+from uvm_mirror import q
+
+__all__ = ["pyhdl_raw_item", "bind", "send_raw"]
+
+
+@uvm_mirror.register
+@dc.dataclass
+class pyhdl_raw_item:
+    """Mirror of the SV ``pyhdl_raw_item``: one byte queue, nothing else."""
+
+    raw: typing.List[int] = q(8)
+
+
+def bind(req) -> None:
+    """Declare the queue element width on `req`'s type, once per SV type."""
+    if not uvm_mirror.is_bound(req):
+        uvm_mirror.bind(req, pyhdl_raw_item)
+
+
+async def send_raw(proxy, data: bytes) -> None:
+    """Drive one wire image through `proxy`'s sequencer.
+
+    The caller is responsible for holding whatever lock serializes SV-blocking
+    calls (see best_practices.md 1) -- this issues three of them.
+    """
+    req = proxy.create_req()
+    bind(req)
+
+    v = req.pack()
+    v.raw = list(data)
+    req.unpack(v)
+
+    await proxy.start_item(req)
+    await proxy.finish_item(req)

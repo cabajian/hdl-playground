@@ -311,6 +311,53 @@ checks:
 if (exp.pack_bytes() != got.pack_bytes()) ...
 ```
 
+### 5.5 When the item is too awkward to mirror, send raw bytes
+
+Everything above assumes the item's fields can be described to the packer.
+Some cannot: nested objects, unions, fields whose width the mirror has no way
+to express. Rather than fight the mirror, send the item's **wire image** as a
+single byte queue and rebuild it in SystemVerilog.
+
+`pyhdl_raw.sv` + `raw_mirror.py` implement this. Python assigns one field:
+
+```python
+await raw_mirror.send_raw(self.proxy, bytes(scapy_packet))
+```
+
+and SystemVerilog rebuilds the real item through a small per-type codec:
+
+```systemverilog
+class tcp_item_codec extends pyhdl_raw_codec;
+   virtual function uvm_sequence_item decode(pyhdl_raw_byte_q_t raw);
+      tcp_item it = tcp_item::type_id::create("raw_req");
+      if (!it.unpack_bytes(raw)) return null;   // null => caller reports
+      return it;
+   endfunction
+endclass
+```
+
+The proxy sequence takes a `codec` handle; non-null switches `create_req()` to
+hand Python a `pyhdl_raw_item` and routes `start_item` through `decode()`.
+
+Three things are worth knowing before reaching for it:
+
+- **It fixes shape, not size.** The same total bytes still cross in one
+  `pack_ints()`, so `UVM_MAX_STREAMBITS` (4096 bits) still bounds the item.
+- **`start_item`/`finish_item` must name the same handle.** Python only holds
+  the raw item, so the decoded one is cached between the two calls. Decoding
+  twice hands UVM a different object than the one it arbitrated for.
+- **You lose field-level checking at the boundary, not end to end.** Nothing on
+  the Python side names a field, but the driver re-serializes the reconstructed
+  item, so a field that decoded wrong still shows up as a byte mismatch
+  downstream. Keep a transport scoreboard if you use this path.
+
+Use a **virtual codec class, not a `#(type REQ)` type parameter.** A
+parameterized proxy needs a self-referential helper declaration, which is the
+shape that makes Verilator's V3Param abort (§4.1) — the same bug that forced
+`tcp_py_seq.sv` to be hand-specialized. Runtime polymorphism sidesteps it
+entirely, compiles to one copy, and lets the codec be chosen per sequence
+instance.
+
 ---
 
 ## 6. Debugging effectively
@@ -489,6 +536,7 @@ Five TCP tests share one compile: 3m34s total instead of ~20 minutes.
 | `UVM/BASE/PACKER/UNPACK/N2NN` | same | §4.4 |
 | Queue always unpacks empty | `use_metadata` not set | §5.2 |
 | Queue values corrupt / width varies | element width inferred | §5.3 |
+| Item's shape cannot be mirrored at all | — use the raw-bytes path | §5.5 |
 | Scoreboard always miscompares | `uvm_object::compare()` on handles | §5.4 |
 | Silent hang, no output | bare `assert` or unhandled exception | §6.2 |
 | All Python log lines trail all SV lines | streams captured separately, C stdio unflushed | §6.1 |
@@ -540,3 +588,4 @@ serializes differently from one transaction to the next.
 | Verilator workarounds | `tcp/pyhdl_uvm_vlt.sv`, `tcp/tcp_py_seq.sv` |
 | Queue element widths | `src/verif/pyhdl/uvm_mirror.py` |
 | Logs that interleave with SV | `src/verif/pyhdl/sim_logging.py` |
+| Raw-bytes item transport | `src/verif/pyhdl/pyhdl_raw.sv`, `raw_mirror.py` |

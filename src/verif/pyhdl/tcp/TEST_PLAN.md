@@ -145,6 +145,7 @@ PSH boundaries, and multi-segment reassembly are all exercised. Random seed via
 | T3 | `tcp_bidir_test` **(headline)** | T1, then A and B each send N random messages, interleaved (alternating with random think-time in sim ns). | Both directions' delivered app bytes exactly match sent bytes; both engines `ESTABLISHED` at end; scoreboard clean; `Matched 2N/2N messages` printed for pytest. |
 | T4 | `tcp_teardown_test` | T3 with small N (5), then `close()` both sides; run past 2·MSL. | Both engines reach `CLOSED` (one via `TIME_WAIT` expiry); FIN/ACK exchange visible on the wire; no segments after both closed. |
 | T5 | `tcp_loss_test` *(stretch)* | T2 with driver-side loss injection: `+drop_pct` (or a fixed drop-index list for determinism) drops whole segments A→B. | Data still delivered completely and in order (RTO retransmission recovers); Python asserts ≥1 retransmission occurred; scoreboard compare relaxed to "delivered ⊆ driven" for the lossy direction. |
+| T6 | `tcp_raw_test` | Raw-bytes transport path. scapy builds 16 segments (varying flags, option sets including empty and padded, payloads 0–256 B); Python sends each as a single byte queue and `tcp_item_codec` rebuilds the item in SV with `unpack_bytes()`. | 16 items A→B, byte-exact at the far-side monitor. Because the driver re-serializes the *reconstructed* item, this is a field-level check despite no field being named on the Python side. Added after P5 to explore an escape hatch for items the packer/printer cannot describe — see best practices §5.5. |
 
 **End-of-test / hang safety:** the UVM test holds an objection while Python
 `start_test` runs; a sim-time watchdog (`#500ms` equivalent) fires `$fatal` with a state
@@ -346,7 +347,45 @@ retransmission still delivers every byte in order. Dropped segments never reach
 the wire, so the scoreboard still compares byte-for-byte on everything that
 *was* driven — the data check is Python's.
 
-## 13. References
+## 13. T6 results: the raw-bytes path
+
+**Green.** `tcp_raw_test` drives 16 scapy-built segments as raw byte queues and
+`tcp_item_codec` rebuilds each `tcp_item` in SV: 16/16 byte-exact at the
+far-side monitor, scoreboard 0 errors. The stimulus spans the shapes that
+matter — the 20 B minimum segment, 288 B maximum, 0/4/8/12 B option sets
+(including one needing pad-to-4), and 0/1/40/256 B payloads.
+
+### The parameterized wrapper does not survive contact with Verilator
+
+The obvious form of this is `pyhdl_raw_seq #(type REQ)`. It cannot be built
+here: a parameterized proxy needs the self-referential helper declaration
+`helper #(REQ) extends imp_impl #(helper #(REQ))`, which is exactly the shape
+that makes V3Param abort — the bug that forced `tcp_py_seq.sv` to be
+hand-specialized in the first place (§4.1 of best practices).
+
+The design is therefore **runtime polymorphism**: an abstract
+`pyhdl_raw_codec` with a virtual `decode()`, and a 12-line concrete subclass
+per item type. This sidesteps parameterization entirely, compiles to one copy,
+and lets the codec be chosen per sequence instance. `tcp_py_seq` takes a
+`codec` handle; null preserves the field path byte-for-byte.
+
+### Negative control
+
+"No field is named on the Python side, yet this is still a field-level check"
+is the load-bearing claim, so it was tested rather than asserted. Injecting
+`it.window = 16'hDEAD` into the codec after `unpack_bytes()` fails the test with
+`UVM_ERROR: 1` — the reconstructed item is re-serialized by the driver, so a
+wrong field changes the bytes the far-side monitor sees. Reverted after the run.
+
+### Scope of the escape hatch
+
+This removes the packer's dependence on the item's *shape*, not its *size*. The
+same total bytes still cross in one `pack_ints()`, so `UVM_MAX_STREAMBITS`
+(4096 bits) still bounds an item — the 288 B maximum here is deliberate
+headroom. An item that is too *large* needs chunking, which this does not
+provide.
+
+## 14. References
 
 - pyhdl-if repository (Apache-2.0): https://github.com/fvutils/pyhdl-if — Call API and
   the shipped UVM layer (`share/uvm/`, `hdl_if.uvm`).

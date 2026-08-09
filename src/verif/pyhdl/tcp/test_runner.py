@@ -9,11 +9,15 @@ import asyncio
 import collections
 import heapq
 import itertools
+import random
 import typing
 
 import hdl_if as hif
 from hdl_if.uvm import uvm_sequence_impl
+from scapy.layers.inet import IP, TCP
+from scapy.packet import Raw
 
+import raw_mirror
 import sim_logging
 import tcp_item_mirror  # noqa: F401 (registers the tcp_item mirror)
 import uvm_mirror
@@ -234,6 +238,17 @@ class _SessionBase(uvm_sequence_impl):
             await self.proxy.start_item(req)
             await self.proxy.finish_item(req)
 
+    async def send_raw_segment(self, seg_bytes: bytes):
+        """Same, but over the raw-bytes path (pyhdl_raw.sv).
+
+        Python sets one byte-queue field instead of ten typed ones; SV rebuilds
+        the tcp_item with unpack_bytes(). Only valid on a sequence started with
+        a codec -- create_req() hands back a pyhdl_raw_item in that mode.
+        """
+        async with sv_lock():
+            _State.sent[self.SIDE].append(seg_bytes)
+            await raw_mirror.send_raw(self.proxy, seg_bytes)
+
 
 # ---------------------------------------------------------------------------
 # T0 smoke sequence: time-service check, mirror/field-transport checks, then
@@ -336,6 +351,73 @@ class XportSeqA(_XportSeq):
 
 class XportSeqB(_XportSeq):
     SIDE = SIDE_B
+
+
+# ---------------------------------------------------------------------------
+# Raw-bytes path: scapy builds the segments, SV reconstructs the items.
+#
+# Nothing here knows the TCP header layout -- contrast _apply_segment(), which
+# has to spell out all ten fields. scapy serializes, SV's unpack_bytes()
+# deserializes, and the only thing crossing the packer is one byte queue.
+#
+# The check is end-to-end and field-level despite never naming a field: the
+# driver re-serializes the *reconstructed* item with pack_bytes(), so if any
+# field came back wrong the far-side monitor's bytes differ and report()
+# catches it.
+# ---------------------------------------------------------------------------
+RAW_SEGMENTS = 16
+
+
+def _scapy_segment(rng: random.Random, i: int) -> bytes:
+    """Build a TCP segment with scapy and return its wire image.
+
+    Built under an IP header so scapy computes a real checksum over the
+    pseudo-header, then sliced back off -- this testbench transports bare TCP.
+    """
+    flags = ["S", "SA", "A", "PA", "FA", "R"][i % 6]
+
+    # Vary the option set, including the empty case and one that needs padding
+    # to a 4-byte boundary, so the data-offset field actually moves around.
+    options = [
+        [],
+        [("MSS", 1460)],
+        [("MSS", 1460), ("NOP", None), ("WScale", 7)],
+        [("SAckOK", b""), ("Timestamp", (rng.randrange(1 << 32), 0))],
+    ][i % 4]
+
+    payload = bytes(rng.randrange(256) for _ in range(rng.choice([0, 1, 40, 256])))
+
+    pkt = IP(src="10.0.0.1", dst="10.0.0.2") / TCP(
+        sport=0x1000 + i,
+        dport=0x2000 + i,
+        seq=rng.randrange(1 << 32),
+        ack=rng.randrange(1 << 32),
+        flags=flags,
+        window=rng.randrange(1 << 16),
+        urgptr=rng.randrange(1 << 16) if "U" in flags else 0,
+        options=options,
+    ) / Raw(load=payload)
+
+    wire = bytes(pkt)                 # forces checksum computation
+    return wire[(wire[0] & 0x0F) * 4:]  # strip the IPv4 header
+
+
+class RawScapySeq(_SessionBase):
+
+    SIDE = SIDE_A
+
+    async def body(self):
+        try:
+            rng = random.Random(_State.seed)
+            for i in range(RAW_SEGMENTS):
+                seg = _scapy_segment(rng, i)
+                hdr_len = (seg[12] >> 4) * 4
+                await self.send_raw_segment(seg)
+                logger.info(f"raw: sent segment {i} ({len(seg)} B, "
+                            f"{hdr_len - 20} B options, {len(seg) - hdr_len} B payload)")
+            logger.info(f"RawScapySeq: {RAW_SEGMENTS} scapy segments sent as raw bytes")
+        except Exception as e:
+            _err(f"RawScapySeq raised: {type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +666,6 @@ class _DataSeqA(_EngineSeq):
         return cond()
 
     async def body(self):
-        import random
         try:
             a, b = build_engines()
             rng = random.Random(_State.seed)
@@ -678,7 +759,6 @@ class TeardownSeqA(_DataSeqA):
     BIDIR = True
 
     async def body(self):
-        import random
         try:
             a, b = build_engines()
             rng = random.Random(_State.seed)
@@ -749,7 +829,6 @@ class LossSeqA(_DataSeqA):
         await super().send_segment(seg_bytes)
 
     async def body(self):
-        import random
         try:
             a, b = build_engines()
             _State.seg_idx = {SIDE_A: 0, SIDE_B: 0}

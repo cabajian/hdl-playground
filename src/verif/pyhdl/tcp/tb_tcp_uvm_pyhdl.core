@@ -48,6 +48,7 @@ targets:
           - +incdir+${UVM_ROOT}
           - +incdir+${PYHDL_IF_SHARE}/dpi
           - +incdir+${PYHDL_IF_SHARE}/uvm
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl
           - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/tcp
           - +define+UVM_NO_DPI
           - +define+HAVE_PYHDL_IF
@@ -94,6 +95,7 @@ targets:
           - +incdir+${UVM_ROOT}
           - +incdir+${PYHDL_IF_SHARE}/dpi
           - +incdir+${PYHDL_IF_SHARE}/uvm
+          - +incdir+${PROJECT_ROOT}/src/verif/pyhdl
           - +incdir+${PROJECT_ROOT}/src/verif/pyhdl/tcp
           - +define+UVM_NO_DPI
           - +define+HAVE_PYHDL_IF

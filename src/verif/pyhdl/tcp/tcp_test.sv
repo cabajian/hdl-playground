@@ -80,10 +80,14 @@ class tcp_base_test extends uvm_test;
    endtask
 
    // Start a Python-bodied sequence on `seqr`. Blocks until its body returns.
-   task start_py_seq(uvm_sequencer#(tcp_item) seqr, string pyclass, string name = "py_seq");
+   // Pass `codec` to run the sequence on the raw-bytes path instead, where
+   // Python sends a wire image and SV rebuilds the item (see pyhdl_raw.sv).
+   task start_py_seq(uvm_sequencer#(tcp_item) seqr, string pyclass, string name = "py_seq",
+                     pyhdl_raw_codec codec = null);
       tcp_py_seq seq;
       seq = tcp_py_seq::type_id::create(name);
       seq.pyclass = pyclass;
+      seq.codec = codec;
       seq.start(seqr);
    endtask
 
@@ -152,6 +156,43 @@ class tcp_transport_test extends tcp_base_test;
       if (env.scoreboard.n_checked_ba != XPORT_SEGMENTS) begin
          `uvm_error(get_name(), $sformatf("Expected %0d B->A transport items, got %0d",
                                           XPORT_SEGMENTS, env.scoreboard.n_checked_ba))
+      end
+      if (env.scoreboard.n_errors != 0) begin
+         `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",
+                                          env.scoreboard.n_errors))
+      end
+   endtask
+endclass
+
+// T6: the raw-bytes transport path. Python builds segments with scapy and
+// sends each one as a single byte queue; tcp_item_codec rebuilds the item on
+// this side with unpack_bytes(). Nothing on the Python side names a TCP field.
+//
+// The check is still field-level even though no field is named anywhere: the
+// driver re-serializes the reconstructed item with pack_bytes(), so a field
+// that came back wrong changes the bytes the far-side monitor sees, and both
+// the scoreboard and Python's report() catch it.
+class tcp_raw_test extends tcp_base_test;
+   `uvm_component_utils(tcp_raw_test)
+
+   localparam int unsigned RAW_SEGMENTS = 16;
+
+   function new(string name, uvm_component parent);
+      super.new(name, parent);
+   endfunction
+
+   virtual task run_body();
+      tcp_item_codec codec;
+      codec = tcp_item_codec::type_id::create("codec");
+
+      start_py_seq(env.agent_a.sequencer, "test_runner::RawScapySeq", "raw_seq", codec);
+
+      #5000ns;
+      check_python_report();
+
+      if (env.scoreboard.n_checked_ab != RAW_SEGMENTS) begin
+         `uvm_error(get_name(), $sformatf("Expected %0d A->B transport items, got %0d",
+                                          RAW_SEGMENTS, env.scoreboard.n_checked_ab))
       end
       if (env.scoreboard.n_errors != 0) begin
          `uvm_error(get_name(), $sformatf("Scoreboard reported %0d error(s)",

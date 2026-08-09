@@ -15,6 +15,7 @@ package tcp_verif_pkg;
 
    typedef byte unsigned tcp_byte_q_t[$];
 
+   `include "pyhdl_raw.sv"
    `include "tcp_item.sv"
    `include "tcp_py_seq.sv"
    `include "tcp_driver.sv"

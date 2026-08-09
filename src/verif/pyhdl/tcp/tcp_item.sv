@@ -117,3 +117,22 @@ class tcp_item extends uvm_sequence_item;
    endfunction
 
 endclass
+
+// Raw-bytes codec for tcp_item: the entire per-type cost of the raw transport
+// path (pyhdl_raw.sv). Python sends a wire image, this turns it back into a
+// real tcp_item using the same unpack_bytes() the monitor path already relies
+// on -- so the raw path cannot silently disagree with the field path.
+class tcp_item_codec extends pyhdl_raw_codec;
+   `uvm_object_utils(tcp_item_codec)
+
+   function new(string name = "tcp_item_codec");
+      super.new(name);
+   endfunction
+
+   virtual function uvm_sequence_item decode(pyhdl_raw_byte_q_t raw);
+      tcp_item it = tcp_item::type_id::create("raw_req");
+      if (!it.unpack_bytes(raw)) return null;
+      return it;
+   endfunction
+
+endclass

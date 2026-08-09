@@ -72,6 +72,17 @@ def test_transport(tcp_cfg):
     assert "Matched 4/4 segments B->A" in out
 
 
+def test_raw(tcp_cfg):
+    """T6: scapy builds segments, SV rebuilds the items from raw bytes.
+
+    Python never names a TCP field here, so a reconstruction bug shows up as a
+    byte mismatch at the far-side monitor rather than as a field compare.
+    """
+    out = _run("tcp_raw_test", tcp_cfg)
+    assert "RawScapySeq: 16 scapy segments sent as raw bytes" in out
+    assert "Matched 16/16 segments A->B" in out
+
+
 def test_handshake(tcp_cfg):
     """T1: three-way handshake, every segment across the SV wire."""
     out = _run("tcp_handshake_test", tcp_cfg)
